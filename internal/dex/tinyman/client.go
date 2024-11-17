@@ -3,6 +3,7 @@ package tinyman
 import (
     "context"
     "fmt"
+    "strings"
     "sync"
     "time"
     "watcher/internal/client"
@@ -143,5 +144,5 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
 
 // isRateLimitError checks if the error is due to rate limiting
 func isRateLimitError(err error) bool {
-    return err != nil && err.Error() contains "429"
+    return err != nil && strings.Contains(err.Error(), "429")
 }
