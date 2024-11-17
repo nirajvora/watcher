@@ -4,9 +4,9 @@ import (
     "context"
     "log"
     "time"
-    "dex-graph/internal/db"
-    "dex-graph/internal/dex"
-    "dex-graph/internal/dex/tinyman"
+    "watcher/internal/db"
+    "watcher/internal/dex"
+    "watcher/internal/dex/tinyman"
 )
 
 func main() {
