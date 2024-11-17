@@ -15,7 +15,7 @@ func main() {
     database, err := db.NewGraphDB(db.Neo4jConfig{
         URI:      "neo4j://localhost:7687",
         Username: "neo4j",
-        Password: "your-password",
+        Password: "your-secure-password",
     })
     if err != nil {
         log.Fatal(err)

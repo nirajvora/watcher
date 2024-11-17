@@ -4,36 +4,32 @@ import (
     "context"
     "fmt"
     "sync"
-    "watcher/internal/client"
-    "watcher/internal/models"
+    "time"
+    "dex-graph/internal/client"
+    "dex-graph/internal/models"
+    "golang.org/x/time/rate"
 )
 
 const (
-    baseURL = "https://mainnet.analytics.tinyman.org/api/v1/pools"
+    baseURL   = "https://mainnet.analytics.tinyman.org/api/v1/pools"
     batchSize = 10
+    
+    // Rate limiting constants
+    requestsPerSecond = 2    // Limit to 2 requests per second
+    burstSize        = 1    // No bursting allowed
+    retryAttempts    = 3    // Number of retries for rate-limited requests
+    retryDelay       = time.Second * 2 // Wait between retries
 )
 
 type Client struct {
     httpClient *client.HTTPClient
-}
-
-type PoolsResponse struct {
-    Count   int           `json:"count"`
-    Results []TinymanPool `json:"results"`
-}
-
-type TinymanPool struct {
-    ID            string  `json:"id"`
-    Asset1ID      string  `json:"asset_1_id"`
-    Asset2ID      string  `json:"asset_2_id"`
-    Asset1Amount  float64 `json:"asset_1_reserves"`
-    Asset2Amount  float64 `json:"asset_2_reserves"`
-    ExchangeRate  float64 `json:"current_price"`
+    rateLimiter *rate.Limiter
 }
 
 func NewClient() *Client {
     return &Client{
         httpClient: client.NewHTTPClient(),
+        rateLimiter: rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize),
     }
 }
 
@@ -42,8 +38,14 @@ func (c *Client) Name() string {
 }
 
 func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
+    // Wait for rate limiter before initial request
+    err := c.rateLimiter.Wait(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("rate limiter wait: %w", err)
+    }
+
     var initial PoolsResponse
-    err := c.httpClient.Get(ctx, fmt.Sprintf("%s?limit=%d&offset=0", baseURL, batchSize), &initial)
+    err = c.httpClient.Get(ctx, fmt.Sprintf("%s?limit=%d&offset=0", baseURL, batchSize), &initial)
     if err != nil {
         return nil, fmt.Errorf("getting initial pool data: %w", err)
     }
@@ -56,20 +58,50 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
     
     var wg sync.WaitGroup
     
+    // Semaphore to limit concurrent requests
+    sem := make(chan struct{}, 5) // Limit concurrent requests to 5
+
     for offset := 0; offset < totalPools; offset += batchSize {
         wg.Add(1)
         go func(offset int) {
             defer wg.Done()
             
-            var resp PoolsResponse
-            url := fmt.Sprintf("%s?limit=%d&offset=%d", baseURL, batchSize, offset)
-            
-            if err := c.httpClient.Get(ctx, url, &resp); err != nil {
-                errorsChan <- fmt.Errorf("fetching pools at offset %d: %w", offset, err)
+            // Acquire semaphore
+            sem <- struct{}{}
+            defer func() { <-sem }()
+
+            // Try multiple times in case of rate limiting
+            for attempt := 0; attempt < retryAttempts; attempt++ {
+                // Wait for rate limiter
+                if err := c.rateLimiter.Wait(ctx); err != nil {
+                    errorsChan <- fmt.Errorf("rate limiter wait: %w", err)
+                    return
+                }
+
+                var resp PoolsResponse
+                url := fmt.Sprintf("%s?limit=%d&offset=%d", baseURL, batchSize, offset)
+                
+                err := c.httpClient.Get(ctx, url, &resp)
+                if err != nil {
+                    if attempt < retryAttempts-1 && isRateLimitError(err) {
+                        // Wait before retrying
+                        select {
+                        case <-ctx.Done():
+                            errorsChan <- ctx.Err()
+                            return
+                        case <-time.After(retryDelay):
+                            continue
+                        }
+                    }
+                    errorsChan <- fmt.Errorf("fetching pools at offset %d: %w", offset, err)
+                    return
+                }
+                
+                poolsChan <- resp.Results
                 return
             }
             
-            poolsChan <- resp.Results
+            errorsChan <- fmt.Errorf("max retry attempts reached for offset %d", offset)
         }(offset)
     }
     
@@ -79,10 +111,15 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
         close(errorsChan)
     }()
     
+    // Check for errors
+    var lastError error
     for err := range errorsChan {
         if err != nil {
-            return nil, err
+            lastError = err
         }
+    }
+    if lastError != nil {
+        return nil, lastError
     }
     
     var allPools []models.Pool
@@ -102,4 +139,9 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
     }
     
     return allPools, nil
+}
+
+// isRateLimitError checks if the error is due to rate limiting
+func isRateLimitError(err error) bool {
+    return err != nil && err.Error() contains "429"
 }
