@@ -5,8 +5,8 @@ import (
     "fmt"
     "sync"
     "time"
-    "dex-graph/internal/client"
-    "dex-graph/internal/models"
+    "watcher/internal/client"
+    "watcher/internal/models"
     "golang.org/x/time/rate"
 )
 
