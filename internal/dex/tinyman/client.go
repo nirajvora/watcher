@@ -22,6 +22,27 @@ const (
     retryDelay       = time.Second * 2 // Wait between retries
 )
 
+// Response types for Tinyman API
+type PoolsResponse struct {
+    Count    int          `json:"count"`
+    Next     string       `json:"next"`
+    Previous string       `json:"previous"`
+    Results  []TinymanPool `json:"results"`
+}
+
+type TinymanPool struct {
+    ID            string  `json:"id"`
+    Address       string  `json:"address"`
+    Asset1ID      string  `json:"asset_1_id"`
+    Asset2ID      string  `json:"asset_2_id"`
+    Asset1Amount  float64 `json:"asset_1_reserves"`
+    Asset2Amount  float64 `json:"asset_2_reserves"`
+    ExchangeRate  float64 `json:"current_price"`
+    UpdatedAt     string  `json:"updated_at"`
+    CreatedAt     string  `json:"created_at"`
+    Verified      bool    `json:"verified"`
+}
+
 type Client struct {
     httpClient *client.HTTPClient
     rateLimiter *rate.Limiter
