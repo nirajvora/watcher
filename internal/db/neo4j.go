@@ -39,9 +39,9 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
 
     constraints := []string{
         "CREATE CONSTRAINT asset_id IF NOT EXISTS FOR (a:Asset) REQUIRE a.id IS UNIQUE",
-        "CREATE CONSTRAINT pool_id IF NOT EXISTS FOR (p:Pool) REQUIRE p.id IS UNIQUE",
-        "CREATE CONSTRAINT unique_exchange_asset_pair IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]->() REQUIRE (r.exchange, startNode(r).id, endNode(r).id) IS UNIQUE;"
+        "CREATE CONSTRAINT pool_address IF NOT EXISTS FOR (p:Pool) REQUIRE p.address IS UNIQUE",
     }
+    
 
     for _, constraint := range constraints {
         _, err := session.Run(ctx, constraint, nil)
@@ -54,6 +54,7 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
         "CREATE INDEX asset_symbol IF NOT EXISTS FOR (a:Asset) ON (a.id)",
         "CREATE INDEX pool_exchange IF NOT EXISTS FOR (p:Pool) ON (p.exchange)",
         "CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchangeRate)",
+        "CREATE INDEX exchange_asset_pair_unique IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchange, r.poolAddress)",
     }
 
     for _, index := range indexes {
@@ -112,13 +113,13 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     `
 
     params := map[string]interface{}{
-        "poolId":   pool.ID,
+        "poolId": pool.ID,
         "exchange": pool.Exchange,
-        "asset1":   pool.Asset1,
-        "asset2":   pool.Asset2,
-        "liq1":     pool.Liquidity1,
-        "liq2":     pool.Liquidity2,
-        "rate":     pool.ExchangeRate,
+        "asset1": pool.Asset1,
+        "asset2": pool.Asset2,
+        "liquidity1": pool.Liquidity1,
+        "liquidity2": pool.Liquidity2,
+        "exchangeRate": pool.ExchangeRate,
     }
 
     _, err := session.Run(ctx, query, params)
