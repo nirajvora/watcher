@@ -40,7 +40,7 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
     constraints := []string{
         "CREATE CONSTRAINT asset_id IF NOT EXISTS FOR (a:Asset) REQUIRE a.id IS UNIQUE",
         "CREATE CONSTRAINT pool_id IF NOT EXISTS FOR (p:Pool) REQUIRE p.id IS UNIQUE",
-        "CREATE CONSTRAINT exchange_id IF NOT EXISTS FOR (e:Exchange) REQUIRE e.id IS UNIQUE",
+        "CREATE CONSTRAINT unique_exchange_asset_pair IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]->() REQUIRE (r.exchange, startNode(r).id, endNode(r).id) IS UNIQUE;"
     }
 
     for _, constraint := range constraints {
@@ -51,8 +51,9 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
     }
 
     indexes := []string{
-        "CREATE INDEX pool_exchange_idx IF NOT EXISTS FOR (p:Pool) ON (p.exchange)",
-        "CREATE INDEX asset_symbol_idx IF NOT EXISTS FOR (a:Asset) ON (a.symbol)",
+        "CREATE INDEX asset_symbol IF NOT EXISTS FOR (a:Asset) ON (a.id)",
+        "CREATE INDEX pool_exchange IF NOT EXISTS FOR (p:Pool) ON (p.exchange)",
+        "CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchangeRate)",
     }
 
     for _, index := range indexes {
@@ -70,17 +71,44 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     defer session.Close(ctx)
 
     query := `
-    MERGE (e:Exchange {id: $exchange})
     MERGE (a1:Asset {id: $asset1})
     MERGE (a2:Asset {id: $asset2})
-    MERGE (p:Pool {id: $poolId})
-    SET p.liquidity1 = $liq1,
-        p.liquidity2 = $liq2,
-        p.exchangeRate = $rate,
-        p.exchange = $exchange
-    MERGE (p)-[:ON_EXCHANGE]->(e)
-    MERGE (p)-[:HAS_TOKEN_A]->(a1)
-    MERGE (p)-[:HAS_TOKEN_B]->(a2)
+    MERGE (p:Pool {
+        address: $poolId
+    })
+    ON CREATE SET
+        p.exchange = $exchange,
+        p.liquidity1 = $liquidity1,
+        p.liquidity2 = $liquidity2
+    ON MATCH SET
+        p.liquidity1 = $liquidity1,
+        p.liquidity2 = $liquidity2
+
+    WITH a1, a2, p
+
+    MERGE (a1)-[s1:PROVIDES_SWAP {
+        exchange: $exchange,
+        poolAddress: $poolId
+    }]->(a2)
+    ON CREATE SET
+        s1.exchangeRate = $exchangeRate,
+        s1.liquidity = $liquidity1
+    ON MATCH SET
+        s1.exchangeRate = $exchangeRate,
+        s1.liquidity = $liquidity1
+
+    MERGE (a2)-[s2:PROVIDES_SWAP {
+        exchange: $exchange,
+        poolAddress: $poolId
+    }]->(a1)
+    ON CREATE SET
+        s2.exchangeRate = 1.0 / $exchangeRate,
+        s2.liquidity = $liquidity2
+    ON MATCH SET
+        s2.exchangeRate = 1.0 / $exchangeRate,
+        s2.liquidity = $liquidity2
+
+    RETURN p, a1, a2, s1, s2
     `
 
     params := map[string]interface{}{

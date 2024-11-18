@@ -189,7 +189,6 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
         for _, p := range pools {
             // Skip pools with no reserves or null reserves
             if p.CurrentAsset1Reserves == nil || p.CurrentAsset2Reserves == nil {
-				fmt.Println("No Reserves... skipping pool")
                 continue
             }
 
