@@ -53,6 +53,10 @@ func main() {
             log.Printf("Stored %d pools so far...", stored)
         }
     }
-
     log.Printf("Successfully processed %d pools", stored)
+
+	log.Println("Finding Arbitrage Opportunities")
+	if err := database.FindArbPaths(ctx, 5); err != nil {
+		log.Printf("Failed to find arbs: %v", err)
+	}
 }

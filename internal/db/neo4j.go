@@ -129,3 +129,94 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
 
     return nil
 }
+
+func (db *GraphDB) FindArbPaths(ctx context.Context, limit string) error {
+    session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
+    defer session.Close(ctx)
+
+    // Create initial graph projection
+    _, err := session.Run(ctx, `
+        CALL gds.graph.project(
+            'swap_network',
+            'Asset',
+            {
+                PROVIDES_SWAP: {
+                    orientation: 'NATURAL',
+                    properties: {
+                        weight: {
+                            property: 'exchangeRate',
+                            defaultValue: 1.0
+                        }
+                    }
+                }
+            }
+        )
+    `, nil)
+    if err != nil {
+        return fmt.Errorf("failed to create initial graph projection: %w", err)
+    }
+
+    // Create transformed graph projection
+    _, err = session.Run(ctx, `
+        CALL gds.graph.project(
+            'arbitrage_network',
+            'Asset',
+            {
+                PROVIDES_SWAP: {
+                    orientation: 'NATURAL',
+                    properties: {
+                        negLogWeight: {
+                            property: 'exchangeRate',
+                            defaultValue: 1.0,
+                            mapping: { 
+                                type: 'LOGARITHM',
+                                negation: true
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    `, nil)
+    if err != nil {
+        return fmt.Errorf("failed to create arbitrage graph projection: %w", err)
+    }
+
+    // Run Bellman-Ford and get results
+    result, err := session.Run(ctx, `
+        CALL gds.bellmanFord.stream('arbitrage_network', {
+            sourceNode: gds.util.asNode('Asset', {id: 'ALGO'}).id,
+            relationshipWeightProperty: 'negLogWeight',
+            relationshipTypes: ['PROVIDES_SWAP']
+        })
+        YIELD path, totalCost
+        WHERE totalCost < 0
+        RETURN path, exp(-totalCost) as profitFactor
+        ORDER BY profitFactor DESC
+        LIMIT $limit
+    `, map[string]interface{}{
+        "limit": limit,
+    })
+    if err != nil {
+        return fmt.Errorf("failed to run bellman-ford: %w", err)
+    }
+
+    // Process results
+    for result.Next(ctx) {
+        record := result.Record()
+        path, _ := record.Get("path")
+        profitFactor, _ := record.Get("profitFactor")
+        fmt.Printf("Found arbitrage path with profit factor: %v\nPath: %v\n", profitFactor, path)
+    }
+
+    // Clean up graph projections
+    _, err = session.Run(ctx, `
+        CALL gds.graph.drop('swap_network');
+        CALL gds.graph.drop('arbitrage_network');
+    `, nil)
+    if err != nil {
+        return fmt.Errorf("failed to clean up graph projections: %w", err)
+    }
+
+    return nil
+}
