@@ -17,6 +17,23 @@ type GraphDB struct {
     driver neo4j.DriverWithContext
 }
 
+type Node struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type Link struct {
+	Source string  `json:"source"`
+	Target string  `json:"target"`
+	Type   string  `json:"type"`
+	Rate   float64 `json:"exchangeRate"`
+}
+
+type GraphData struct {
+	Nodes []Node `json:"nodes"`
+	Links []Link `json:"links"`
+}
+
 func NewGraphDB(config Neo4jConfig) (*GraphDB, error) {
     driver, err := neo4j.NewDriverWithContext(
         config.URI,
@@ -130,25 +147,113 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     return nil
 }
 
-func (db *GraphDB) FindArbPaths(ctx context.Context, limit string) error {
+func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
     session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
     defer session.Close(ctx)
 
-    // First, find the node ID of our starting asset
+	query := `
+	MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
+	RETURN DISTINCT a1.id, a2.id, r.exchange, r.exchangeRate
+	`
+
+	result, err := session.Run(ctx, query, nil)
+	if err != nil {
+		return GraphData{}, err
+	}
+
+	nodesMap := make(map[string]Node)
+	var links []Link
+
+	for result.Next(ctx) {
+		record := result.Record()
+		source, _ := record.Get("a1.id")
+		target, _ := record.Get("a2.id")
+		exchange, _ := record.Get("r.exchange")
+		rate, _ := record.Get("r.exchangeRate")
+
+		sourceID := source.(string)
+		targetID := target.(string)
+
+		nodesMap[sourceID] = Node{ID: sourceID, Label: sourceID}
+		nodesMap[targetID] = Node{ID: targetID, Label: targetID}
+
+		links = append(links, Link{
+			Source: sourceID,
+			Target: targetID,
+			Type:   exchange.(string),
+			Rate:   rate.(float64),
+		})
+	}
+
+	var nodes []Node
+	for _, node := range nodesMap {
+		nodes = append(nodes, node)
+	}
+
+	return GraphData{Nodes: nodes, Links: links}, nil
+}
+
+func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
+    session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
+    defer session.Close(ctx)
+
+    // First, check what assets we have
     result, err := session.Run(ctx, `
-        MATCH (a:Asset {id: '0'})
-        RETURN id(a) as nodeId
+        MATCH (a:Asset) 
+        RETURN a.id as assetId 
+        LIMIT 5
+    `, nil)
+    if err != nil {
+        return fmt.Errorf("failed to check assets: %w", err)
+    }
+
+    fmt.Println("Available assets:")
+    for result.Next(ctx) {
+        record := result.Record()
+        assetId, ok := record.Get("assetId")
+        if !ok {
+            continue
+        }
+        fmt.Printf("- %v\n", assetId)
+    }
+
+    // Now find the node ID of our starting asset (using the first asset we find)
+    result, err = session.Run(ctx, `
+        MATCH (a:Asset)
+        RETURN id(a) as nodeId, a.id as assetId
+        LIMIT 1
     `, nil)
     if err != nil {
         return fmt.Errorf("failed to find starting node ID: %w", err)
     }
 
     var startNodeId int64
+    var startAssetId string
     if result.Next(ctx) {
         record := result.Record()
-        startNodeId, _ = record.Get("nodeId")
+        nodeId, ok := record.Get("nodeId")
+        if !ok {
+            return fmt.Errorf("nodeId not found in record")
+        }
+        
+        startNodeId, ok = nodeId.(int64)
+        if !ok {
+            return fmt.Errorf("failed to convert nodeId to int64")
+        }
+
+        assetId, ok := record.Get("assetId")
+        if !ok {
+            return fmt.Errorf("assetId not found in record")
+        }
+        
+        startAssetId, ok = assetId.(string)
+        if !ok {
+            return fmt.Errorf("failed to convert assetId to string")
+        }
+        
+        fmt.Printf("Starting with asset: %s (node ID: %d)\n", startAssetId, startNodeId)
     } else {
-        return fmt.Errorf("starting asset not found")
+        return fmt.Errorf("no assets found in database")
     }
 
     // Create initial graph projection
@@ -203,12 +308,13 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit string) error {
     result, err = session.Run(ctx, `
         CALL gds.bellmanFord.stream('arbitrage_network', {
             sourceNode: $startNodeId,
-            relationshipWeightProperty: 'negLogWeight',
-            relationshipTypes: ['PROVIDES_SWAP']
+            relationshipWeightProperty: 'negLogWeight'
         })
-        YIELD path, totalCost
-        WHERE totalCost < 0
-        RETURN path, exp(-totalCost) as profitFactor
+        YIELD targetNode, totalCost
+        WITH targetNode, totalCost WHERE totalCost < 0
+        MATCH (source:Asset), (target:Asset)
+        WHERE id(source) = $startNodeId AND id(target) = targetNode
+        RETURN source.id as sourceAsset, target.id as targetAsset, exp(-totalCost) as profitFactor
         ORDER BY profitFactor DESC
         LIMIT $limit
     `, map[string]interface{}{
@@ -220,20 +326,37 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit string) error {
     }
 
     // Process results
+    foundArbs := false
     for result.Next(ctx) {
+        foundArbs = true
         record := result.Record()
-        path, _ := record.Get("path")
-        profitFactor, _ := record.Get("profitFactor")
-        fmt.Printf("Found arbitrage path with profit factor: %v\nPath: %v\n", profitFactor, path)
+        sourceAsset, ok1 := record.Get("sourceAsset")
+        targetAsset, ok2 := record.Get("targetAsset")
+        profitFactor, ok3 := record.Get("profitFactor")
+        if !ok1 || !ok2 || !ok3 {
+            continue
+        }
+        fmt.Printf("Found arbitrage opportunity from %v to %v with profit factor: %v\n", 
+            sourceAsset, targetAsset, profitFactor)
+    }
+
+    if !foundArbs {
+        fmt.Println("No arbitrage opportunities found")
     }
 
     // Clean up graph projections
     _, err = session.Run(ctx, `
-        CALL gds.graph.drop('swap_network');
-        CALL gds.graph.drop('arbitrage_network');
+        CALL gds.graph.drop('swap_network')
     `, nil)
     if err != nil {
-        return fmt.Errorf("failed to clean up graph projections: %w", err)
+        return fmt.Errorf("failed to clean up swap_network projection: %w", err)
+    }
+
+    _, err = session.Run(ctx, `
+        CALL gds.graph.drop('arbitrage_network')
+    `, nil)
+    if err != nil {
+        return fmt.Errorf("failed to clean up arbitrage_network projection: %w", err)
     }
 
     return nil

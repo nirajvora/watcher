@@ -57,7 +57,7 @@ func main() {
 
 	log.Println("Finding Arbitrage Opportunities")
 	limit := 5
-	if err := database.FindArbPaths(ctx, string(limit)); err != nil {
+	if err := database.FindArbPaths(ctx, limit); err != nil {
 		log.Printf("Failed to find arbs: %v", err)
 	}
 }
