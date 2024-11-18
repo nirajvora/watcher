@@ -9,7 +9,7 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 ```
 ├── cmd/
 │   └── dexgraph/          # Application entrypoint
-├── internal/
+├── pkg/
 │   ├── client/            # Shared HTTP client
 │   ├── db/                # Database operationsgit
 │   ├── dex/               # DEX interfaces and implementations
@@ -23,23 +23,23 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 
 ### Key Components
 
-1. **HTTP Client** (`internal/client/`)
+1. **HTTP Client** (`pkg/client/`)
    - Shared HTTP client with connection pooling
    - Configurable timeouts and retry logic
    - Context support for cancellation
 
-2. **Database Layer** (`internal/db/`)
+2. **Database Layer** (`pkg/db/`)
    - Neo4j graph database integration
    - Pool storage and retrieval
    - Schema management
    - Index optimization
 
-3. **DEX Integrations** (`internal/dex/`)
+3. **DEX Integrations** (`pkg/dex/`)
    - Common interface for DEX interactions
    - Concurrent pool data fetching
    - Exchange-specific implementations
 
-4. **Data Models** (`internal/models/`)
+4. **Data Models** (`pkg/models/`)
    - Shared data structures
    - Type definitions for pools and assets
 
@@ -90,7 +90,7 @@ config := db.Neo4jConfig{
 
 ### Adding a New DEX
 
-1. Create a new directory under `internal/dex/` for the DEX
+1. Create a new directory under `pkg/dex/` for the DEX
 2. Implement the `PoolFetcher` interface:
 ```go
 type PoolFetcher interface {

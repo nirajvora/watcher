@@ -3,7 +3,7 @@ package db
 import (
     "context"
     "fmt"
-    "watcher/internal/models"
+    "watcher/pkg/models"
     "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -134,8 +134,25 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit string) error {
     session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
     defer session.Close(ctx)
 
+    // First, find the node ID of our starting asset
+    result, err := session.Run(ctx, `
+        MATCH (a:Asset {id: '0'})
+        RETURN id(a) as nodeId
+    `, nil)
+    if err != nil {
+        return fmt.Errorf("failed to find starting node ID: %w", err)
+    }
+
+    var startNodeId int64
+    if result.Next(ctx) {
+        record := result.Record()
+        startNodeId, _ = record.Get("nodeId")
+    } else {
+        return fmt.Errorf("starting asset not found")
+    }
+
     // Create initial graph projection
-    _, err := session.Run(ctx, `
+    _, err = session.Run(ctx, `
         CALL gds.graph.project(
             'swap_network',
             'Asset',
@@ -182,10 +199,10 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit string) error {
         return fmt.Errorf("failed to create arbitrage graph projection: %w", err)
     }
 
-    // Run Bellman-Ford and get results
-    result, err := session.Run(ctx, `
+    // Run Bellman-Ford and get results using the found nodeId
+    result, err = session.Run(ctx, `
         CALL gds.bellmanFord.stream('arbitrage_network', {
-            sourceNode: gds.util.asNode('Asset', {id: 'ALGO'}).id,
+            sourceNode: $startNodeId,
             relationshipWeightProperty: 'negLogWeight',
             relationshipTypes: ['PROVIDES_SWAP']
         })
@@ -196,6 +213,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit string) error {
         LIMIT $limit
     `, map[string]interface{}{
         "limit": limit,
+        "startNodeId": startNodeId,
     })
     if err != nil {
         return fmt.Errorf("failed to run bellman-ford: %w", err)

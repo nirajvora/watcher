@@ -4,9 +4,9 @@ import (
     "context"
     "log"
     "time"
-    "watcher/internal/db"
-    "watcher/internal/dex"
-    "watcher/internal/dex/tinyman"
+    "watcher/pkg/db"
+    "watcher/pkg/dex"
+    "watcher/pkg/dex/tinyman"
 )
 
 func main() {
@@ -56,7 +56,8 @@ func main() {
     log.Printf("Successfully processed %d pools", stored)
 
 	log.Println("Finding Arbitrage Opportunities")
-	if err := database.FindArbPaths(ctx, 5); err != nil {
+	limit := 5
+	if err := database.FindArbPaths(ctx, string(limit)); err != nil {
 		log.Printf("Failed to find arbs: %v", err)
 	}
 }

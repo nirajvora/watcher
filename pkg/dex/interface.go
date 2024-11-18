@@ -2,7 +2,7 @@ package dex
 
 import (
     "context"
-    "watcher/internal/models"
+    "watcher/pkg/models"
 )
 
 type PoolFetcher interface {

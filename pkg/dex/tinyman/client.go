@@ -7,8 +7,8 @@ import (
     "strings"
     "sync"
     "time"
-    "watcher/internal/client"
-    "watcher/internal/models"
+    "watcher/pkg/client"
+    "watcher/pkg/models"
     "golang.org/x/time/rate"
 )
 

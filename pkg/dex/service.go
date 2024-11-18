@@ -3,7 +3,7 @@ package dex
 import (
     "context"
     "sync"
-    "watcher/internal/models"
+    "watcher/pkg/models"
 )
 
 type Service struct {
