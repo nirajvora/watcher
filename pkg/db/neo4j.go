@@ -3,6 +3,8 @@ package db
 import (
     "context"
     "fmt"
+    "log"
+    "math"
     "watcher/pkg/models"
     "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -151,110 +153,111 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
     session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
     defer session.Close(ctx)
 
-	query := `
-	MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
-	RETURN DISTINCT a1.id, a2.id, r.exchange, r.exchangeRate
-	`
+    query := `
+    MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
+    RETURN DISTINCT a1.id, a2.id, r.exchange, r.exchangeRate
+    `
 
-	result, err := session.Run(ctx, query, nil)
-	if err != nil {
-		return GraphData{}, err
-	}
+    result, err := session.Run(ctx, query, nil)
+    if err != nil {
+        return GraphData{}, err
+    }
 
-	nodesMap := make(map[string]Node)
-	var links []Link
+    nodesMap := make(map[string]Node)
+    var links []Link
+    var invalidRates int
 
-	for result.Next(ctx) {
-		record := result.Record()
-		source, _ := record.Get("a1.id")
-		target, _ := record.Get("a2.id")
-		exchange, _ := record.Get("r.exchange")
-		rate, _ := record.Get("r.exchangeRate")
+    for result.Next(ctx) {
+        record := result.Record()
+        source, _ := record.Get("a1.id")
+        target, _ := record.Get("a2.id")
+        exchange, _ := record.Get("r.exchange")
+        rate, _ := record.Get("r.exchangeRate")
 
-		sourceID := source.(string)
-		targetID := target.(string)
+        sourceID := source.(string)
+        targetID := target.(string)
+        exchangeRate := rate.(float64)
 
-		nodesMap[sourceID] = Node{ID: sourceID, Label: sourceID}
-		nodesMap[targetID] = Node{ID: targetID, Label: targetID}
+        // Log problematic rates but include them in the output
+        if math.IsInf(exchangeRate, 0) || math.IsNaN(exchangeRate) {
+            log.Printf("WARNING: Invalid exchange rate detected between %s and %s: %v", 
+                sourceID, targetID, exchangeRate)
+            invalidRates++
+            // Set to a value that JSON can handle
+            exchangeRate = -1
+        }
 
-		links = append(links, Link{
-			Source: sourceID,
-			Target: targetID,
-			Type:   exchange.(string),
-			Rate:   rate.(float64),
-		})
-	}
+        nodesMap[sourceID] = Node{ID: sourceID, Label: sourceID}
+        nodesMap[targetID] = Node{ID: targetID, Label: targetID}
 
-	var nodes []Node
-	for _, node := range nodesMap {
-		nodes = append(nodes, node)
-	}
+        links = append(links, Link{
+            Source: sourceID,
+            Target: targetID,
+            Type:   exchange.(string),
+            Rate:   exchangeRate,
+        })
+    }
 
-	return GraphData{Nodes: nodes, Links: links}, nil
+    var nodes []Node
+    for _, node := range nodesMap {
+        nodes = append(nodes, node)
+    }
+
+    log.Printf("Fetched %d nodes and %d links (including %d invalid rates)", 
+        len(nodes), len(links), invalidRates)
+
+    return GraphData{Nodes: nodes, Links: links}, nil
 }
 
 func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
     session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
     defer session.Close(ctx)
 
-    // First, check what assets we have
+    // Get all assets and their node IDs
     result, err := session.Run(ctx, `
         MATCH (a:Asset) 
-        RETURN a.id as assetId 
-        LIMIT 5
+        RETURN id(a) as nodeId, a.id as assetId
     `, nil)
     if err != nil {
-        return fmt.Errorf("failed to check assets: %w", err)
+        return fmt.Errorf("failed to get assets: %w", err)
     }
 
-    fmt.Println("Available assets:")
+    // Store asset information
+    type AssetInfo struct {
+        NodeId  int64
+        AssetId string
+    }
+    var assets []AssetInfo
+
     for result.Next(ctx) {
         record := result.Record()
+        nodeId, ok := record.Get("nodeId")
+        if !ok {
+            continue
+        }
+        
+        nId, ok := nodeId.(int64)
+        if !ok {
+            continue
+        }
+
         assetId, ok := record.Get("assetId")
         if !ok {
             continue
         }
-        fmt.Printf("- %v\n", assetId)
-    }
-
-    // Now find the node ID of our starting asset (using the first asset we find)
-    result, err = session.Run(ctx, `
-        MATCH (a:Asset)
-        RETURN id(a) as nodeId, a.id as assetId
-        LIMIT 1
-    `, nil)
-    if err != nil {
-        return fmt.Errorf("failed to find starting node ID: %w", err)
-    }
-
-    var startNodeId int64
-    var startAssetId string
-    if result.Next(ctx) {
-        record := result.Record()
-        nodeId, ok := record.Get("nodeId")
-        if !ok {
-            return fmt.Errorf("nodeId not found in record")
-        }
         
-        startNodeId, ok = nodeId.(int64)
+        aId, ok := assetId.(string)
         if !ok {
-            return fmt.Errorf("failed to convert nodeId to int64")
+            continue
         }
 
-        assetId, ok := record.Get("assetId")
-        if !ok {
-            return fmt.Errorf("assetId not found in record")
-        }
-        
-        startAssetId, ok = assetId.(string)
-        if !ok {
-            return fmt.Errorf("failed to convert assetId to string")
-        }
-        
-        fmt.Printf("Starting with asset: %s (node ID: %d)\n", startAssetId, startNodeId)
-    } else {
-        return fmt.Errorf("no assets found in database")
+        assets = append(assets, AssetInfo{
+            NodeId:  nId,
+            AssetId: aId,
+        })
     }
+
+    fmt.Printf("Found %d assets to check for arbitrage\n", len(assets))
 
     // Create initial graph projection
     _, err = session.Run(ctx, `
@@ -304,47 +307,57 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
         return fmt.Errorf("failed to create arbitrage graph projection: %w", err)
     }
 
-    // Run Bellman-Ford and get results using the found nodeId
-    result, err = session.Run(ctx, `
-        CALL gds.bellmanFord.stream('arbitrage_network', {
-            sourceNode: $startNodeId,
-            relationshipWeightProperty: 'negLogWeight'
+    // Check each asset for arbitrage opportunities
+    totalOpportunities := 0
+    for _, asset := range assets {
+        fmt.Printf("\nChecking arbitrage opportunities starting from asset %s...\n", asset.AssetId)
+        
+        result, err = session.Run(ctx, `
+            CALL gds.bellmanFord.stream('arbitrage_network', {
+                sourceNode: $startNodeId,
+                relationshipWeightProperty: 'negLogWeight'
+            })
+            YIELD targetNode, totalCost
+            WITH targetNode, totalCost WHERE totalCost < 0
+            MATCH (source:Asset), (target:Asset)
+            WHERE id(source) = $startNodeId AND id(target) = targetNode
+            RETURN source.id as sourceAsset, target.id as targetAsset, exp(-totalCost) as profitFactor
+            ORDER BY profitFactor DESC
+            LIMIT $limit
+        `, map[string]interface{}{
+            "limit": limit,
+            "startNodeId": asset.NodeId,
         })
-        YIELD targetNode, totalCost
-        WITH targetNode, totalCost WHERE totalCost < 0
-        MATCH (source:Asset), (target:Asset)
-        WHERE id(source) = $startNodeId AND id(target) = targetNode
-        RETURN source.id as sourceAsset, target.id as targetAsset, exp(-totalCost) as profitFactor
-        ORDER BY profitFactor DESC
-        LIMIT $limit
-    `, map[string]interface{}{
-        "limit": limit,
-        "startNodeId": startNodeId,
-    })
-    if err != nil {
-        return fmt.Errorf("failed to run bellman-ford: %w", err)
-    }
-
-    // Process results
-    foundArbs := false
-    for result.Next(ctx) {
-        foundArbs = true
-        record := result.Record()
-        sourceAsset, ok1 := record.Get("sourceAsset")
-        targetAsset, ok2 := record.Get("targetAsset")
-        profitFactor, ok3 := record.Get("profitFactor")
-        if !ok1 || !ok2 || !ok3 {
+        if err != nil {
+            // Log error but continue with next asset
+            fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
             continue
         }
-        fmt.Printf("Found arbitrage opportunity from %v to %v with profit factor: %v\n", 
-            sourceAsset, targetAsset, profitFactor)
+
+        // Process results for this asset
+        opportunities := 0
+        for result.Next(ctx) {
+            record := result.Record()
+            sourceAsset, ok1 := record.Get("sourceAsset")
+            targetAsset, ok2 := record.Get("targetAsset")
+            profitFactor, ok3 := record.Get("profitFactor")
+            if !ok1 || !ok2 || !ok3 {
+                continue
+            }
+            fmt.Printf("Found arbitrage opportunity from %v to %v with profit factor: %v\n", 
+                sourceAsset, targetAsset, profitFactor)
+            opportunities++
+            totalOpportunities++
+        }
+
+        if opportunities == 0 {
+            fmt.Printf("No arbitrage opportunities found starting from asset %s\n", asset.AssetId)
+        }
     }
 
-    if !foundArbs {
-        fmt.Println("No arbitrage opportunities found")
-    }
+    fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
 
-    // Clean up graph projections
+    // Clean up graph projections - separate calls
     _, err = session.Run(ctx, `
         CALL gds.graph.drop('swap_network')
     `, nil)

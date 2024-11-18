@@ -3,10 +3,10 @@ package main
 import (
     "context"
     "log"
-    "time"
+    // "time"
     "watcher/pkg/db"
-    "watcher/pkg/dex"
-    "watcher/pkg/dex/tinyman"
+    // "watcher/pkg/dex"
+    // "watcher/pkg/dex/tinyman"
 )
 
 func main() {
@@ -23,37 +23,37 @@ func main() {
     }
     defer database.Close(ctx)
 
-    log.Println("Setting up database schema...")
-    if err := database.SetupSchema(ctx); err != nil {
-        log.Fatal(err)
-    }
+    // log.Println("Setting up database schema...")
+    // if err := database.SetupSchema(ctx); err != nil {
+    //     log.Fatal(err)
+    // }
 
-    log.Println("Initializing DEX service...")
-    dexService := dex.NewService(
-        tinyman.NewClient(),
-    )
+    // log.Println("Initializing DEX service...")
+    // dexService := dex.NewService(
+    //     tinyman.NewClient(),
+    // )
 
-    log.Println("Fetching pools from all DEXs...")
-    startTime := time.Now()
-    pools, err := dexService.FetchAllPools(ctx)
-    if err != nil {
-        log.Fatal(err)
-    }
-    log.Printf("Fetched %d pools in %v", len(pools), time.Since(startTime))
+    // log.Println("Fetching pools from all DEXs...")
+    // startTime := time.Now()
+    // pools, err := dexService.FetchAllPools(ctx)
+    // if err != nil {
+    //     log.Fatal(err)
+    // }
+    // log.Printf("Fetched %d pools in %v", len(pools), time.Since(startTime))
 
-    log.Println("Storing pools in database...")
-    stored := 0
-    for _, pool := range pools {
-        if err := database.StorePool(ctx, pool); err != nil {
-            log.Printf("Failed to store pool %s: %v", pool.ID, err)
-            continue
-        }
-        stored++
-        if stored%100 == 0 {
-            log.Printf("Stored %d pools so far...", stored)
-        }
-    }
-    log.Printf("Successfully processed %d pools", stored)
+    // log.Println("Storing pools in database...")
+    // stored := 0
+    // for _, pool := range pools {
+    //     if err := database.StorePool(ctx, pool); err != nil {
+    //         log.Printf("Failed to store pool %s: %v", pool.ID, err)
+    //         continue
+    //     }
+    //     stored++
+    //     if stored%100 == 0 {
+    //         log.Printf("Stored %d pools so far...", stored)
+    //     }
+    // }
+    // log.Printf("Successfully processed %d pools", stored)
 
 	log.Println("Finding Arbitrage Opportunities")
 	limit := 5
