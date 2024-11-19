@@ -17,18 +17,18 @@ var upgrader = websocket.Upgrader{
 }
 
 func main() {
-    ctx := context.Background()
+	ctx := context.Background()
 
-    log.Println("Initializing database connection...")
-    database, err := db.NewGraphDB(db.Neo4jConfig{
-        URI:      "neo4j://localhost:7687",
-        Username: "neo4j",
-        Password: "your-secure-password",
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer database.Close(ctx)
+	log.Println("Initializing database connection...")
+	database, err := db.NewGraphDB(db.Neo4jConfig{
+		URI:      "neo4j://localhost:7687",
+		Username: "neo4j",
+		Password: "your-secure-password",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer database.Close(ctx)
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleWebSocket(w, r, database)

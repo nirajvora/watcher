@@ -1,11 +1,11 @@
 package dex
 
 import (
-    "context"
-    "watcher/pkg/models"
+	"context"
+	"watcher/pkg/models"
 )
 
 type PoolFetcher interface {
-    FetchPools(ctx context.Context) ([]models.Pool, error)
-    Name() string
+	FetchPools(ctx context.Context) ([]models.Pool, error)
+	Name() string
 }
