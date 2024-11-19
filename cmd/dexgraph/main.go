@@ -45,7 +45,7 @@ func main() {
 	stored := 0
 	for _, pool := range pools {
 		if err := database.StorePool(ctx, pool); err != nil {
-			log.Printf("Failed to store pool %s: %v", pool.ID, err)
+			log.Printf("Failed to store pool %s: %v", pool.Address, err)
 			continue
 		}
 		stored++

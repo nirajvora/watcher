@@ -215,7 +215,7 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
 			}
 
 			pool := models.Pool{
-				ID:                     p.Address,
+				Address:                p.Address,
 				Exchange:               c.Name(),
 				Chain:                  "ALGO",
 				Asset1ID:               p.Asset1.ID,

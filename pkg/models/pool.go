@@ -1,7 +1,7 @@
 package models
 
 type Pool struct {
-	ID                     string
+	Address                string
 	Exchange               string
 	Chain                  string
 	Asset1Name             string

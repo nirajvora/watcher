@@ -72,7 +72,7 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
 		"CREATE INDEX asset_symbol IF NOT EXISTS FOR (a:Asset) ON (a.id)",
 		"CREATE INDEX pool_exchange IF NOT EXISTS FOR (p:Pool) ON (p.exchange)",
 		"CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchangeRate)",
-		"CREATE INDEX exchange_asset_pair_unique IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchange, r.poolAddress)",
+		"CREATE INDEX exchange_asset_pair_unique IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchange, r.address)",
 	}
 
 	for _, index := range indexes {
@@ -99,7 +99,7 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
         name: $asset2Name
     })
     MERGE (p:Pool {
-        address: $poolId
+        address: $address
     })
     ON CREATE SET
         p.exchange = $exchange,
@@ -114,31 +114,31 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
 
     MERGE (a1)-[s1:PROVIDES_SWAP {
         exchange: $exchange,
-        poolAddress: $poolId
+        address: $address
     }]->(a2)
-    ON CREATE SET
+    SET 
         s1.exchangeRate = $exchangeRate,
-        s1.liquidity = $liquidity1
-    ON MATCH SET
-        s1.exchangeRate = $exchangeRate,
-        s1.liquidity = $liquidity1
+        s1.sourceLiquidity = $liquidity1,
+        s1.targetLiquidity = $liquidity2,
+        s1.sourceName = $asset1Name,
+        s1.targetName = $asset2Name
 
     MERGE (a2)-[s2:PROVIDES_SWAP {
         exchange: $exchange,
-        poolAddress: $poolId
+        address: $address
     }]->(a1)
-    ON CREATE SET
+    SET
         s2.exchangeRate = $reciprocalExchangeRate,
-        s2.liquidity = $liquidity2
-    ON MATCH SET
-        s2.exchangeRate = $reciprocalExchangeRate,
-        s2.liquidity = $liquidity2
+        s2.sourceLiquidity = $liquidity2,
+        s2.targetLiquidity = $liquidity1,
+        s2.sourceName = $asset2Name,
+        s2.targetName = $asset1Name
 
     RETURN p, a1, a2, s1, s2
     `
 
 	params := map[string]interface{}{
-		"poolId":                 pool.ID,
+		"address":                pool.Address,
 		"exchange":               pool.Exchange,
 		"chain":                  pool.Chain,
 		"asset1Id":               pool.Asset1ID,
