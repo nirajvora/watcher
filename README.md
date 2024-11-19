@@ -7,18 +7,18 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 ### Component Overview
 
 ```
+.
+├── README.md
 ├── cmd/
-│   └── dexgraph/          # Application entrypoint
+│   ├── dexgraph/          # Application entrypoint
+│   └── ui/                # Web UI server
 ├── pkg/
 │   ├── client/            # Shared HTTP client
-│   ├── db/                # Database operationsgit
+│   ├── db/                # Database operations
 │   ├── dex/               # DEX interfaces and implementations
-│   │   ├── tinyman/       # Tinyman DEX client
-│   │   ├── algofi/        # AlgoFi DEX client
-│   │   └── pactfi/        # PactFi DEX client
 │   └── models/            # Shared data models
-├── docker-compose.yml     # Local development environment
-└── README.md              # Project documentation
+├── static/                # Static web assets
+└── docker-compose.yaml    # Local development environment
 ```
 
 ### Key Components
@@ -43,6 +43,11 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
    - Shared data structures
    - Type definitions for pools and assets
 
+5. **Web UI** (`cmd/ui/` and `static/`)
+   - Graph visualization interface served from static/index.html
+   - Interactive view of pool relationships
+   - Web-based access to Neo4j data
+
 ## Getting Started
 
 ### Prerequisites
@@ -58,11 +63,21 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 ```bash
 docker compose up -d
 ```
-Note: data will persist at `/var/lib/docker/volumes/` based on volumes defined in docker-compose.yaml
 
-3. Build and run the application:
+3. Build and run the main application:
 ```bash
 go run cmd/dexgraph/main.go
+```
+
+4. Start the UI visualization server:
+```bash
+go run cmd/ui/main.go
+```
+This will serve the static/index.html file containing the graph visualization interface.
+
+5. Access the graph visualization interface at:
+```
+http://localhost:8080
 ```
 
 ### Neo4j Database Access
@@ -111,6 +126,8 @@ type PoolFetcher interface {
 
 ## Running Tests
 
+TODO: Impliment tests so we can run:
+
 ```bash
 go test ./...
 ```
@@ -150,12 +167,10 @@ Common issues and solutions:
    - Verify API endpoints
    - Review error logs
 
-## License
-
-NIVO Technologies
 
 ## References
 
 - [Neo4j Documentation](https://neo4j.com/docs/)
 - [Go Documentation](https://golang.org/doc/)
 - [Tinyman API Documentation](https://docs.tinyman.org/)
+- [d3.js Force Documentation](https://d3js.org/d3-force)
