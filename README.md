@@ -1,5 +1,7 @@
 # Watcher- Cryptocurrency DEX Pool Tracker
 
+![Graph Visualization Example](docs/images/Uatu_the_Watcher.png)
+
 The Watcher project impliments a tool, DEX Graph, a Go-based application that fetches liquidity pool data from various decentralized exchanges (DEXs) and stores it in a Neo4j graph database for analysis. The project is designed to support arbitrage opportunity detection across multiple DEXs.
 
 ## Architecture
@@ -9,6 +11,8 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 ```
 .
 ├── README.md
+├── docs
+│   └── images/            # Assets for this README
 ├── cmd/
 │   ├── dexgraph/          # Application entrypoint
 │   └── ui/                # Web UI server
