@@ -202,20 +202,30 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
                 continue
             }
 
-            // Calculate exchange rate if possible
-            var exchangeRate float64
+            // Calculate and validate exchange rates
+            var exchangeRate, reciprocalExchangeRate float64
             if reserves2 > 0 {
                 exchangeRate = reserves1 / reserves2
+            }
+            if reserves1 > 0 {
+                reciprocalExchangeRate = reserves2 / reserves1
+            }
+            if exchangeRate == 0 || reciprocalExchangeRate == 0 {
+                continue
             }
 
             pool := models.Pool{
                 ID:           p.Address,
                 Exchange:     c.Name(),
-                Asset1:       p.Asset1.ID,
-                Asset2:       p.Asset2.ID,
+                Chain:        "ALGO",
+                Asset1ID:     p.Asset1.ID,
+                Asset1Name:   p.Asset1.Name,  
+                Asset2ID:     p.Asset2.ID,
+                Asset2Name:   p.Asset2.Name,
                 Liquidity1:   reserves1,
                 Liquidity2:   reserves2,
                 ExchangeRate: exchangeRate,
+                ReciprocalExchangeRate: reciprocalExchangeRate,
             }
             allPools = append(allPools, pool)
         }

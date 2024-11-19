@@ -4,7 +4,6 @@ import (
     "context"
     "fmt"
     "log"
-    "math"
     "watcher/pkg/models"
     "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -91,15 +90,22 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     defer session.Close(ctx)
 
     query := `
-    MERGE (a1:Asset {id: $asset1})
-    MERGE (a2:Asset {id: $asset2})
+    MERGE (a1:Asset {
+        id: $asset1Id,
+        name: $asset1Name
+    })
+    MERGE (a2:Asset {
+        id: $asset2Id,
+        name: $asset2Name
+    })
     MERGE (p:Pool {
         address: $poolId
     })
     ON CREATE SET
         p.exchange = $exchange,
         p.liquidity1 = $liquidity1,
-        p.liquidity2 = $liquidity2
+        p.liquidity2 = $liquidity2,
+        p.chain = $chain
     ON MATCH SET
         p.liquidity1 = $liquidity1,
         p.liquidity2 = $liquidity2
@@ -122,10 +128,10 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
         poolAddress: $poolId
     }]->(a1)
     ON CREATE SET
-        s2.exchangeRate = 1.0 / $exchangeRate,
+        s2.exchangeRate = $reciprocalExchangeRate,
         s2.liquidity = $liquidity2
     ON MATCH SET
-        s2.exchangeRate = 1.0 / $exchangeRate,
+        s2.exchangeRate = $reciprocalExchangeRate,
         s2.liquidity = $liquidity2
 
     RETURN p, a1, a2, s1, s2
@@ -134,11 +140,15 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     params := map[string]interface{}{
         "poolId": pool.ID,
         "exchange": pool.Exchange,
-        "asset1": pool.Asset1,
-        "asset2": pool.Asset2,
+        "chain": pool.Chain,
+        "asset1Id": pool.Asset1ID,
+        "asset1Name": pool.Asset1Name,
+        "asset2Id": pool.Asset2ID,
+        "asset2Name": pool.Asset2Name,
         "liquidity1": pool.Liquidity1,
         "liquidity2": pool.Liquidity2,
         "exchangeRate": pool.ExchangeRate,
+        "reciprocalExchangeRate": pool.ReciprocalExchangeRate,
     }
 
     _, err := session.Run(ctx, query, params)
@@ -153,6 +163,34 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
     session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
     defer session.Close(ctx)
 
+    // Log details about invalid rates
+    debugQuery := `
+    MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
+    WHERE r.exchangeRate = 0 OR r.exchangeRate IS NULL
+    RETURN a1.id as source, a2.id as target, r.exchange as exchange, 
+           r.exchangeRate as rate, r.poolAddress as poolAddress
+    `
+    debugResult, err := session.Run(ctx, debugQuery, nil)
+    if err != nil {
+        log.Printf("Warning: Debug query failed: %v", err)
+    } else {
+        log.Println("\nInvalid Exchange Rates Analysis:")
+        log.Println("==================================")
+        for debugResult.Next(ctx) {
+            record := debugResult.Record()
+            source, _ := record.Get("source")
+            target, _ := record.Get("target")
+            exchange, _ := record.Get("exchange")
+            rate, _ := record.Get("rate")
+            pool, _ := record.Get("poolAddress")
+            
+            log.Printf("Pool: %v (%v)\n  %v -> %v: %v\n", 
+                pool, exchange, source, target, rate)
+        }
+        log.Println("==================================\n")
+    }
+
+    // Query for visualization
     query := `
     MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
     RETURN DISTINCT a1.id, a2.id, r.exchange, r.exchangeRate
@@ -165,7 +203,6 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
 
     nodesMap := make(map[string]Node)
     var links []Link
-    var invalidRates int
 
     for result.Next(ctx) {
         record := result.Record()
@@ -177,15 +214,7 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
         sourceID := source.(string)
         targetID := target.(string)
         exchangeRate := rate.(float64)
-
-        // Log problematic rates but include them in the output
-        if math.IsInf(exchangeRate, 0) || math.IsNaN(exchangeRate) {
-            log.Printf("WARNING: Invalid exchange rate detected between %s and %s: %v", 
-                sourceID, targetID, exchangeRate)
-            invalidRates++
-            // Set to a value that JSON can handle
-            exchangeRate = -1
-        }
+        exchangeName := exchange.(string)
 
         nodesMap[sourceID] = Node{ID: sourceID, Label: sourceID}
         nodesMap[targetID] = Node{ID: targetID, Label: targetID}
@@ -193,7 +222,7 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
         links = append(links, Link{
             Source: sourceID,
             Target: targetID,
-            Type:   exchange.(string),
+            Type:   exchangeName,
             Rate:   exchangeRate,
         })
     }
@@ -203,8 +232,7 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
         nodes = append(nodes, node)
     }
 
-    log.Printf("Fetched %d nodes and %d links (including %d invalid rates)", 
-        len(nodes), len(links), invalidRates)
+    log.Printf("\nFetched %d nodes and %d links", len(nodes), len(links))
 
     return GraphData{Nodes: nodes, Links: links}, nil
 }
