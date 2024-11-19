@@ -21,6 +21,7 @@ type GraphDB struct {
 type Node struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+    Name string `json:"name"`
 }
 
 type Link struct {
@@ -163,37 +164,16 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
     session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
     defer session.Close(ctx)
 
-    // Log details about invalid rates
-    debugQuery := `
-    MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
-    WHERE r.exchangeRate = 0 OR r.exchangeRate IS NULL
-    RETURN a1.id as source, a2.id as target, r.exchange as exchange, 
-           r.exchangeRate as rate, r.poolAddress as poolAddress
-    `
-    debugResult, err := session.Run(ctx, debugQuery, nil)
-    if err != nil {
-        log.Printf("Warning: Debug query failed: %v", err)
-    } else {
-        log.Println("\nInvalid Exchange Rates Analysis:")
-        log.Println("==================================")
-        for debugResult.Next(ctx) {
-            record := debugResult.Record()
-            source, _ := record.Get("source")
-            target, _ := record.Get("target")
-            exchange, _ := record.Get("exchange")
-            rate, _ := record.Get("rate")
-            pool, _ := record.Get("poolAddress")
-            
-            log.Printf("Pool: %v (%v)\n  %v -> %v: %v\n", 
-                pool, exchange, source, target, rate)
-        }
-        log.Println("==================================\n")
-    }
-
-    // Query for visualization
+    // Update the query to include name fields
     query := `
     MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
-    RETURN DISTINCT a1.id, a2.id, r.exchange, r.exchangeRate
+    RETURN DISTINCT 
+        a1.id as source_id,
+        a1.name as source_name,
+        a2.id as target_id,
+        a2.name as target_name,
+        r.exchange,
+        r.exchangeRate
     `
 
     result, err := session.Run(ctx, query, nil)
@@ -206,22 +186,46 @@ func (db *GraphDB) FetchGraphData(ctx context.Context) (GraphData, error) {
 
     for result.Next(ctx) {
         record := result.Record()
-        source, _ := record.Get("a1.id")
-        target, _ := record.Get("a2.id")
+        sourceID, _ := record.Get("source_id")
+        targetID, _ := record.Get("target_id")
         exchange, _ := record.Get("r.exchange")
         rate, _ := record.Get("r.exchangeRate")
+        
+        sourceName, ok := record.Get("source_name")
+        if !ok || sourceName == nil {
+            sourceName = sourceID
+        }
+        
+        targetName, ok := record.Get("target_name")
+        if !ok || targetName == nil {
+            targetName = targetID
+        }
 
-        sourceID := source.(string)
-        targetID := target.(string)
+        sID := sourceID.(string)
+        tID := targetID.(string)
+        sName := sourceName.(string)
+        tName := targetName.(string)
         exchangeRate := rate.(float64)
         exchangeName := exchange.(string)
 
-        nodesMap[sourceID] = Node{ID: sourceID, Label: sourceID}
-        nodesMap[targetID] = Node{ID: targetID, Label: targetID}
+        if _, exists := nodesMap[sID]; !exists {
+            nodesMap[sID] = Node{
+                ID:    sID,
+                Label: sID,
+                Name:  sName,
+            }
+        }
+        if _, exists := nodesMap[tID]; !exists {
+            nodesMap[tID] = Node{
+                ID:    tID,
+                Label: tID,
+                Name:  tName,
+            }
+        }
 
         links = append(links, Link{
-            Source: sourceID,
-            Target: targetID,
+            Source: sID,
+            Target: tID,
             Type:   exchangeName,
             Rate:   exchangeRate,
         })
