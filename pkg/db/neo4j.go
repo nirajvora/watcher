@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"log"
+	"math"
+	"strings"
 	"watcher/pkg/models"
 )
 
@@ -118,6 +120,7 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     }]->(a2)
     SET 
         s1.exchangeRate = $exchangeRate,
+        s1.negLogRate = $negLogExchangeRate,
         s1.sourceLiquidity = $liquidity1,
         s1.targetLiquidity = $liquidity2,
         s1.sourceName = $asset1Name,
@@ -129,6 +132,7 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     }]->(a1)
     SET
         s2.exchangeRate = $reciprocalExchangeRate,
+        s2.negLogRate = $negLogReciprocalExchangeRate,
         s2.sourceLiquidity = $liquidity2,
         s2.targetLiquidity = $liquidity1,
         s2.sourceName = $asset2Name,
@@ -138,17 +142,19 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
     `
 
 	params := map[string]interface{}{
-		"address":                pool.Address,
-		"exchange":               pool.Exchange,
-		"chain":                  pool.Chain,
-		"asset1Id":               pool.Asset1ID,
-		"asset1Name":             pool.Asset1Name,
-		"asset2Id":               pool.Asset2ID,
-		"asset2Name":             pool.Asset2Name,
-		"liquidity1":             pool.Liquidity1,
-		"liquidity2":             pool.Liquidity2,
-		"exchangeRate":           pool.ExchangeRate,
-		"reciprocalExchangeRate": pool.ReciprocalExchangeRate,
+		"address":                      pool.Address,
+		"exchange":                     pool.Exchange,
+		"chain":                        pool.Chain,
+		"asset1Id":                     pool.Asset1ID,
+		"asset1Name":                   pool.Asset1Name,
+		"asset2Id":                     pool.Asset2ID,
+		"asset2Name":                   pool.Asset2Name,
+		"liquidity1":                   pool.Liquidity1,
+		"liquidity2":                   pool.Liquidity2,
+		"exchangeRate":                 pool.ExchangeRate,
+		"reciprocalExchangeRate":       pool.ReciprocalExchangeRate,
+		"negLogExchangeRate":           -math.Log(pool.ExchangeRate),
+		"negLogReciprocalExchangeRate": -math.Log(pool.ReciprocalExchangeRate),
 	}
 
 	_, err := session.Run(ctx, query, params)
@@ -290,28 +296,6 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 
 	fmt.Printf("Found %d assets to check for arbitrage\n", len(assets))
 
-	// Create initial graph projection
-	_, err = session.Run(ctx, `
-        CALL gds.graph.project(
-            'swap_network',
-            'Asset',
-            {
-                PROVIDES_SWAP: {
-                    orientation: 'NATURAL',
-                    properties: {
-                        weight: {
-                            property: 'exchangeRate',
-                            defaultValue: 1.0
-                        }
-                    }
-                }
-            }
-        )
-    `, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create initial graph projection: %w", err)
-	}
-
 	// Create transformed graph projection
 	_, err = session.Run(ctx, `
         CALL gds.graph.project(
@@ -321,13 +305,9 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
                 PROVIDES_SWAP: {
                     orientation: 'NATURAL',
                     properties: {
-                        negLogWeight: {
-                            property: 'exchangeRate',
-                            defaultValue: 1.0,
-                            mapping: { 
-                                type: 'LOGARITHM',
-                                negation: true
-                            }
+                        negLogRate: {
+                            property: 'negLogRate',
+                            defaultValue: 1.0
                         }
                     }
                 }
@@ -346,13 +326,11 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 		result, err = session.Run(ctx, `
             CALL gds.bellmanFord.stream('arbitrage_network', {
                 sourceNode: $startNodeId,
-                relationshipWeightProperty: 'negLogWeight'
+                relationshipWeightProperty: 'negLogRate'
             })
-            YIELD targetNode, totalCost
-            WITH targetNode, totalCost WHERE totalCost < 0
-            MATCH (source:Asset), (target:Asset)
-            WHERE id(source) = $startNodeId AND id(target) = targetNode
-            RETURN source.id as sourceAsset, target.id as targetAsset, exp(-totalCost) as profitFactor
+            YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, route, isNegativeCycle
+            WHERE exp(-totalCost) > 1
+            RETURN DISTINCT exp(-totalCost) as profitFactor, [nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS nodeNames, costs, nodes(route) as route
             ORDER BY profitFactor DESC
             LIMIT $limit
         `, map[string]interface{}{
@@ -366,36 +344,30 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 		}
 
 		// Process results for this asset
-		opportunities := 0
 		for result.Next(ctx) {
 			record := result.Record()
-			sourceAsset, ok1 := record.Get("sourceAsset")
-			targetAsset, ok2 := record.Get("targetAsset")
-			profitFactor, ok3 := record.Get("profitFactor")
-			if !ok1 || !ok2 || !ok3 {
+			nodeNames, ok1 := record.Get("nodeNames")
+			costs, ok2 := record.Get("costs")
+			route, ok3 := record.Get("route")
+			profitFactor, ok4 := record.Get("profitFactor")
+			if !ok1 || !ok2 || !ok3 || !ok4 {
 				continue
 			}
-			fmt.Printf("Found arbitrage opportunity from %v to %v with profit factor: %v\n",
-				sourceAsset, targetAsset, profitFactor)
-			opportunities++
+			names := make([]string, len(nodeNames.([]interface{})))
+			for i, v := range nodeNames.([]interface{}) {
+				names[i] = v.(string)
+			}
+			fmt.Printf("\n\nFound arbitrage opportunity along the following route with profit factor: %v\n %v",
+				profitFactor, strings.Join(names, "->"))
+			fmt.Printf("\nDetailed information about each Node on the route:\n%v", route)
+			fmt.Printf("\nnegLogRate for each liquidity pool necessary for facilitating arb:\n%v\n\n", costs)
 			totalOpportunities++
-		}
-
-		if opportunities == 0 {
-			fmt.Printf("No arbitrage opportunities found starting from asset %s\n", asset.AssetId)
 		}
 	}
 
 	fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
 
-	// Clean up graph projections - separate calls
-	_, err = session.Run(ctx, `
-        CALL gds.graph.drop('swap_network')
-    `, nil)
-	if err != nil {
-		return fmt.Errorf("failed to clean up swap_network projection: %w", err)
-	}
-
+	// Clean up graph projection
 	_, err = session.Run(ctx, `
         CALL gds.graph.drop('arbitrage_network')
     `, nil)
