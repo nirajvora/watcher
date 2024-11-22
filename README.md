@@ -142,7 +142,7 @@ go test ./...
 
 - Monitor the database size:
 ```cypher
-CALL dbms.components() YIELD name, version;
+CALL dbms.components() YIELD name, versions;
 ```
 
 - Check indexes:
