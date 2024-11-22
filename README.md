@@ -140,9 +140,9 @@ go test ./...
 
 ### Neo4j Database
 
-- Monitor the database size:
+- View the database config:
 ```cypher
-CALL dbms.components() YIELD name, versions;
+CALL dbms.listConfig
 ```
 
 - Check indexes:
