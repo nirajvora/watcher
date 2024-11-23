@@ -8,55 +8,19 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
+type Asset struct {
+	NodeId  int64
+	AssetId string
+}
+
 func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
-	// Get all assets and their node IDs
-	result, err := session.Run(ctx, `
-        MATCH (a:Asset) 
-        RETURN id(a) as nodeId, a.id as assetId
-    `, nil)
+	assets, err := db.fetchStartAssets(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get assets: %w", err)
+		return fmt.Errorf("failed to fetch initial asset info: %w", err)
 	}
-
-	// Store asset information
-	type AssetInfo struct {
-		NodeId  int64
-		AssetId string
-	}
-	var assets []AssetInfo
-
-	for result.Next(ctx) {
-		record := result.Record()
-		nodeId, ok := record.Get("nodeId")
-		if !ok {
-			continue
-		}
-
-		nId, ok := nodeId.(int64)
-		if !ok {
-			continue
-		}
-
-		assetId, ok := record.Get("assetId")
-		if !ok {
-			continue
-		}
-
-		aId, ok := assetId.(string)
-		if !ok {
-			continue
-		}
-
-		assets = append(assets, AssetInfo{
-			NodeId:  nId,
-			AssetId: aId,
-		})
-	}
-
-	fmt.Printf("Found %d assets to check for arbitrage\n", len(assets))
 
 	// Create transformed graph projection
 	_, err = session.Run(ctx, `
@@ -85,7 +49,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	for _, asset := range assets {
 		fmt.Printf("\nChecking arbitrage opportunities starting from asset %s...\n", asset.AssetId)
 
-		result, err = session.Run(ctx, `
+		result, err := session.Run(ctx, `
             CALL gds.bellmanFord.stream('arbitrage_network', {
                 sourceNode: $startNodeId,
                 relationshipWeightProperty: 'negLogRate'
@@ -96,14 +60,13 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
             ORDER BY profitFactor DESC
             LIMIT $limit
         `, map[string]interface{}{
-			"limit":       limit,
-			"startNodeId": asset.NodeId,
-		})
-		if err != nil {
-			// Log error but continue with next asset
-			fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
-			continue
-		}
+            "limit":       limit,
+            "startNodeId": asset.NodeId,
+        })
+        if err != nil {
+            fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
+            continue
+        }
 
 		// Process results for this asset
 		for result.Next(ctx) {
@@ -138,4 +101,51 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	}
 
 	return nil
+}
+
+func (db *GraphDB) fetchStartAssets(ctx context.Context) ([]Asset, error) {
+	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer session.Close(ctx)
+
+	// Get all assets and their node IDs
+	result, err := session.Run(ctx, `
+        MATCH (a:Asset) 
+        RETURN id(a) as nodeId, a.id as assetId
+    `, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get assets: %w", err)
+	}
+
+	// Store asset information
+	var assets []Asset
+
+	for result.Next(ctx) {
+		record := result.Record()
+		nodeId, ok := record.Get("nodeId")
+		if !ok {
+			continue
+		}
+
+		nId, ok := nodeId.(int64)
+		if !ok {
+			continue
+		}
+
+		assetId, ok := record.Get("assetId")
+		if !ok {
+			continue
+		}
+
+		aId, ok := assetId.(string)
+		if !ok {
+			continue
+		}
+
+		assets = append(assets, Asset{
+			NodeId:  nId,
+			AssetId: aId,
+		})
+	}
+
+	return assets, nil
 }
