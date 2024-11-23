@@ -3,10 +3,12 @@ package db
 import (
 	"context"
 	"fmt"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"log"
 	"math"
+
 	"watcher/pkg/models"
+
+    "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 type Neo4jConfig struct {
@@ -72,7 +74,7 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
 	indexes := []string{
 		"CREATE INDEX asset_symbol IF NOT EXISTS FOR (a:Asset) ON (a.id)",
 		"CREATE INDEX pool_exchange IF NOT EXISTS FOR (p:Pool) ON (p.exchange)",
-		"CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchangeRate)",
+		"CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.negLogRate)",
 		"CREATE INDEX exchange_asset_pair_unique IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchange, r.address)",
 	}
 
