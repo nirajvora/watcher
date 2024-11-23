@@ -17,31 +17,15 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
-	assets, err := db.fetchStartAssets(ctx)
+	assets, err := db.fetchStartAssets(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to fetch initial asset info: %w", err)
 	}
 
 	// Create transformed graph projection
-	_, err = session.Run(ctx, `
-        CALL gds.graph.project(
-            'arbitrage_network',
-            'Asset',
-            {
-                PROVIDES_SWAP: {
-                    orientation: 'NATURAL',
-                    properties: {
-                        negLogRate: {
-                            property: 'negLogRate',
-                            defaultValue: 1.0
-                        }
-                    }
-                }
-            }
-        )
-    `, nil)
+	err = db.projectArbNetwork(ctx, session)
 	if err != nil {
-		return fmt.Errorf("failed to create arbitrage graph projection: %w", err)
+		return fmt.Errorf("Error projcting arbitrage network:%w", err)
 	}
 
 	// Check each asset for arbitrage opportunities
@@ -93,9 +77,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
 
 	// Clean up graph projection
-	_, err = session.Run(ctx, `
-        CALL gds.graph.drop('arbitrage_network')
-    `, nil)
+	err = db.dropArbNetwork(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to clean up arbitrage_network projection: %w", err)
 	}
@@ -103,10 +85,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	return nil
 }
 
-func (db *GraphDB) fetchStartAssets(ctx context.Context) ([]Asset, error) {
-	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer session.Close(ctx)
-
+func (db *GraphDB) fetchStartAssets(ctx context.Context, session neo4j.SessionWithContext) ([]Asset, error) {
 	// Get all assets and their node IDs
 	result, err := session.Run(ctx, `
         MATCH (a:Asset) 
@@ -148,4 +127,40 @@ func (db *GraphDB) fetchStartAssets(ctx context.Context) ([]Asset, error) {
 	}
 
 	return assets, nil
+}
+
+func (db *GraphDB) projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
+	_, err := session.Run(ctx, `
+        CALL gds.graph.project(
+            'arbitrage_network',
+            'Asset',
+            {
+                PROVIDES_SWAP: {
+                    orientation: 'NATURAL',
+                    properties: {
+                        negLogRate: {
+                            property: 'negLogRate',
+                            defaultValue: 1.0
+                        }
+                    }
+                }
+            }
+        )
+    `, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create gds graph projection against DB: %w", err)
+	}
+
+	return nil
+}
+
+func (db *GraphDB) dropArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
+	_, err := session.Run(ctx, `
+        CALL gds.graph.drop('arbitrage_network')
+    `, nil)
+	if err != nil {
+		return fmt.Errorf("failed to drop gds graph projection from DB: %w", err)
+	}
+
+	return nil
 }
