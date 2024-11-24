@@ -13,11 +13,6 @@ type Asset struct {
 	AssetId string
 }
 
-type CycleKey struct {
-	AssetIds []string  // Sorted list of asset IDs in the cycle
-	Profit   float64   // Profit factor of the cycle
-}
-
 func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
