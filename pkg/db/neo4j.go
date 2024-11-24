@@ -61,7 +61,6 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
 
 	constraints := []string{
 		"CREATE CONSTRAINT asset_id IF NOT EXISTS FOR (a:Asset) REQUIRE a.id IS UNIQUE",
-		"CREATE CONSTRAINT pool_address IF NOT EXISTS FOR (p:Pool) REQUIRE p.address IS UNIQUE",
 	}
 
 	for _, constraint := range constraints {
@@ -73,7 +72,6 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
 
 	indexes := []string{
 		"CREATE INDEX asset_symbol IF NOT EXISTS FOR (a:Asset) ON (a.id)",
-		"CREATE INDEX pool_exchange IF NOT EXISTS FOR (p:Pool) ON (p.exchange)",
 		"CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.negLogRate)",
 		"CREATE INDEX exchange_asset_pair_unique IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchange, r.address)",
 	}
@@ -101,22 +99,12 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
         id: $asset2Id,
         name: $asset2Name
     })
-    MERGE (p:Pool {
-        address: $address
-    })
-    ON CREATE SET
-        p.exchange = $exchange,
-        p.liquidity1 = $liquidity1,
-        p.liquidity2 = $liquidity2,
-        p.chain = $chain
-    ON MATCH SET
-        p.liquidity1 = $liquidity1,
-        p.liquidity2 = $liquidity2
 
-    WITH a1, a2, p
+    WITH a1, a2
 
     MERGE (a1)-[s1:PROVIDES_SWAP {
-        exchange: $exchange,
+        chain: $chain,
+		exchange: $exchange,
         address: $address
     }]->(a2)
     SET 
@@ -139,7 +127,7 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
         s2.sourceName = $asset2Name,
         s2.targetName = $asset1Name
 
-    RETURN p, a1, a2, s1, s2
+    RETURN a1, a2, s1, s2
     `
 
 	params := map[string]interface{}{
