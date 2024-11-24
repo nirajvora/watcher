@@ -178,3 +178,16 @@ Common issues and solutions:
 - [Go Documentation](https://golang.org/doc/)
 - [Tinyman API Documentation](https://docs.tinyman.org/)
 - [d3.js Force Documentation](https://d3js.org/d3-force)
+
+## Misc.
+
+Example of arb that gets identified with `negLogRate < 0` and not `exp(-negLogRate) > 1` 
+
+```txt
+< Found arbitrage opportunity along the following route with profit factor: 1
+<  ZONE->Elephant Nips->ZONE
+< Detailed information about each Node on the route:
+< [{95 4:50561179-b898-4249-8075-5768feb9d457:95 [Asset] map[id:444035862 name:ZONE]} {236 4:50561179-b898-4249-8075-5768feb9d457:236 [Asset] map[id:640873368 name:Elephant Nips]} {95 4:50561179-b898-4249-8075-5768feb9d457:95 [Asset] map[id:444035862 name:ZONE]}]
+< negLogRate for each liquidity pool necessary for facilitating arb:
+< [0 -0.49344432415171424 -1.1102230246251565e-16]
+```
