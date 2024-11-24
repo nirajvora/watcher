@@ -70,12 +70,12 @@ docker compose up -d
 
 3. Build and run the main application:
 ```bash
-go run cmd/dexgraph/main.go
+make graph
 ```
 
 4. Start the UI visualization server:
 ```bash
-go run cmd/ui/main.go
+make ui
 ```
 This will serve the static/index.html file containing the graph visualization interface.
 
