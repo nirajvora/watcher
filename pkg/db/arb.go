@@ -151,31 +151,6 @@ func (db *GraphDB) fetchStartAssets(ctx context.Context, session neo4j.SessionWi
 	return assets, nil
 }
 
-func createCycleKey(assetIds []interface{}, profitFactor float64) (string, error) {
-	// Convert assetIds to strings and find the smallest ID
-	ids := make([]string, len(assetIds))
-	smallestIdx := 0
-	for i, id := range assetIds {
-		strId, ok := id.(string)
-		if !ok {
-			return "", fmt.Errorf("invalid asset ID type")
-		}
-		ids[i] = strId
-		if strId < ids[smallestIdx] {
-			smallestIdx = i
-		}
-	}
-
-	// Rotate the slice so that the smallest ID is first
-	rotated := make([]string, len(ids))
-	for i := 0; i < len(ids); i++ {
-		rotated[i] = ids[(i+smallestIdx)%len(ids)]
-	}
-
-	// Create a unique key combining the rotated IDs and profit factor
-	return fmt.Sprintf("%.10f:%s", profitFactor, strings.Join(rotated, ",")), nil
-}
-
 func (db *GraphDB) projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
 	_, err := session.Run(ctx, `
         CALL gds.graph.project(
@@ -210,4 +185,29 @@ func (db *GraphDB) dropArbNetwork(ctx context.Context, session neo4j.SessionWith
 	}
 
 	return nil
+}
+
+func createCycleKey(assetIds []interface{}, profitFactor float64) (string, error) {
+	// Convert assetIds to strings and find the smallest ID
+	ids := make([]string, len(assetIds))
+	smallestIdx := 0
+	for i, id := range assetIds {
+		strId, ok := id.(string)
+		if !ok {
+			return "", fmt.Errorf("invalid asset ID type")
+		}
+		ids[i] = strId
+		if strId < ids[smallestIdx] {
+			smallestIdx = i
+		}
+	}
+
+	// Rotate the slice so that the smallest ID is first
+	rotated := make([]string, len(ids))
+	for i := 0; i < len(ids); i++ {
+		rotated[i] = ids[(i+smallestIdx)%len(ids)]
+	}
+
+	// Create a unique key combining the rotated IDs and profit factor
+	return fmt.Sprintf("%.10f:%s", profitFactor, strings.Join(rotated, ",")), nil
 }
