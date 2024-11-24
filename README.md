@@ -123,7 +123,6 @@ type PoolFetcher interface {
 
 - Follow standard Go project layout
 - Use `gofmt` for formatting
-- Add comments for exported functions
 - Include error handling
 - Use context for cancellation
 - Write concurrent code where appropriate
