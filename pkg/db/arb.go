@@ -47,13 +47,13 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
             ORDER BY profitFactor DESC
             LIMIT $limit
         `, map[string]interface{}{
-            "limit":       limit,
-            "startNodeId": asset.NodeId,
-        })
-        if err != nil {
-            fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
-            continue
-        }
+			"limit":       limit,
+			"startNodeId": asset.NodeId,
+		})
+		if err != nil {
+			fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
+			continue
+		}
 
 		// Process results for this asset
 		for result.Next(ctx) {
