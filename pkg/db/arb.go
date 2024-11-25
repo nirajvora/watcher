@@ -13,23 +13,43 @@ type Asset struct {
 	AssetId string
 }
 
+type LiquidityPool struct {
+	SourceAssetName string
+	SourceAssetId   string
+	SourceLiquidity string
+	TargetAssetName string
+	TargetAssetId   string
+	TargetLiquidity string
+	PoolAddress     string
+	PoolExchange    string
+	Chain           string
+}
+
+type ArbCycle []LiquidityPool
+
 func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
-	assets, err := db.fetchStartAssets(ctx, session)
-	if err != nil {
-		return fmt.Errorf("failed to fetch initial asset info: %w", err)
+	// assets, err := db.fetchStartAssets(ctx, session)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to fetch initial asset info: %w", err)
+	// }
+	assets := []Asset{
+		{
+			NodeId:  5,
+			AssetId: "312769",
+		},
 	}
 
 	// Create transformed graph projection
-	err = db.projectArbNetwork(ctx, session)
+	err := db.projectArbNetwork(ctx, session)
 	if err != nil {
 		return fmt.Errorf("Error projcting arbitrage network:%w", err)
 	}
 
 	// Use a map to track unique cycles
-	uniqueCycles := make(map[string]struct{})
+	uniqueCycles := make(map[string]ArbCycle)
 	totalOpportunities := 0
 
 	// Check each asset for arbitrage opportunities
@@ -47,13 +67,13 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
             ORDER BY profitFactor DESC
             LIMIT $limit
         `, map[string]interface{}{
-            "limit":       limit,
-            "startNodeId": asset.NodeId,
-        })
-        if err != nil {
-            fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
-            continue
-        }
+			"limit":       limit,
+			"startNodeId": asset.NodeId,
+		})
+		if err != nil {
+			fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
+			continue
+		}
 
 		// Process results for this asset
 		for result.Next(ctx) {
@@ -77,15 +97,36 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			if _, exists := uniqueCycles[cycleKey]; exists {
 				continue
 			}
-			uniqueCycles[cycleKey] = struct{}{}
 
-			names := make([]string, len(assetNames.([]interface{})))
-			for i, v := range assetNames.([]interface{}) {
-				names[i] = v.(string)
+			// Create ArbCycle from the result
+			names := assetNames.([]interface{})
+			ids := assetIds.([]interface{})
+			costsList := costs.([]interface{})
+			cycle := make(ArbCycle, len(names)-1) // -1 because the last asset is the same as first
+
+			for i := 0; i < len(ids)-1; i++ {
+				pool, err := fetchPool(ctx, session, 
+					ids[i].(string), 
+					ids[i+1].(string), 
+					costsList[i+1].(float64),
+				)
+				if err != nil {
+					fmt.Printf("Error fetching pool: %v\n", err)
+					continue
+				}
+				cycle[i] = pool
 			}
-			fmt.Printf("\n\nFound arbitrage opportunity along the following route with profit factor: %v\n %v",
-				profitFactor, strings.Join(names, "->"))
+
+			uniqueCycles[cycleKey] = cycle
+			fmt.Println(cycle)
+			// names := make([]string, len(assetNames.([]interface{})))
+			// for i, v := range assetNames.([]interface{}) {
+			// 	names[i] = v.(string)
+			// }
+			// fmt.Printf("\n\nFound arbitrage opportunity along the following route with profit factor: %v\n %v",
+			// 	profitFactor, strings.Join(names, "->"))
 			fmt.Printf("\nDetailed information about each Node on the route:\n%v", route)
+			fmt.Printf("\nAssetIds each node for facilitating arb:\n%v\n", ids)
 			fmt.Printf("\nnegLogRate for each liquidity pool necessary for facilitating arb:\n%v\n\n", costs)
 			totalOpportunities++
 		}
@@ -144,6 +185,57 @@ func (db *GraphDB) fetchStartAssets(ctx context.Context, session neo4j.SessionWi
 	}
 
 	return assets, nil
+}
+
+func fetchPool(ctx context.Context, session neo4j.SessionWithContext, sourceId string, targetId string, negLogRate float64) (LiquidityPool, error) {
+    result, err := session.Run(ctx, `
+        MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
+        WHERE a1.id = $sourceId 
+        AND r.negLogRate = $negLogRate 
+        AND a2.id = $targetId
+        RETURN DISTINCT
+            a1.name as sourceName,
+            a1.id as sourceId,
+            a2.name as targetName,
+            a2.id as targetId,
+            r.address as poolAddress,
+            r.exchange as exchange
+        LIMIT 1
+    `, map[string]interface{}{
+        "sourceId":   sourceId,
+        "negLogRate": negLogRate,
+        "targetId":   targetId,
+    })
+    if err != nil {
+        return LiquidityPool{}, fmt.Errorf("error querying pool details: %w", err)
+    }
+
+    if !result.Next(ctx) {
+        return LiquidityPool{}, fmt.Errorf("no pool found for source: %s, target: %s, negLogRate %v", sourceId, targetId, negLogRate)
+    }
+
+    record := result.Record()
+    sourceName, ok1 := record.Get("sourceName")
+    sourceAssetId, ok2 := record.Get("sourceId")
+    targetName, ok3 := record.Get("targetName")
+    targetAssetId, ok4 := record.Get("targetId")
+    poolAddress, ok5 := record.Get("poolAddress")
+    exchange, ok6 := record.Get("exchange")
+
+    if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 {
+        return LiquidityPool{}, fmt.Errorf("missing required fields in pool record")
+    }
+
+    pool := LiquidityPool{
+        SourceAssetName: sourceName.(string),
+        SourceAssetId:   sourceAssetId.(string),
+        TargetAssetName: targetName.(string),
+        TargetAssetId:   targetAssetId.(string),
+        PoolAddress:     poolAddress.(string),
+        PoolExchange:    exchange.(string),
+    }
+
+    return pool, nil
 }
 
 func (db *GraphDB) projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
