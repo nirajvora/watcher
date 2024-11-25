@@ -31,19 +31,13 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
-	// assets, err := db.fetchStartAssets(ctx, session)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to fetch initial asset info: %w", err)
-	// }
-	assets := []Asset{
-		{
-			NodeId:  5,
-			AssetId: "312769",
-		},
+	assets, err := db.fetchStartAssets(ctx, session)
+	if err != nil {
+		return fmt.Errorf("failed to fetch initial asset info: %w", err)
 	}
 
 	// Create transformed graph projection
-	err := db.projectArbNetwork(ctx, session)
+	err = db.projectArbNetwork(ctx, session)
 	if err != nil {
 		return fmt.Errorf("Error projcting arbitrage network:%w", err)
 	}
@@ -79,11 +73,10 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 		for result.Next(ctx) {
 			record := result.Record()
 			// assetNames, ok1 := record.Get("assetNames")
-			assetIds, ok2 := record.Get("assetIds")
-			costs, ok3 := record.Get("costs")
-			route, ok4 := record.Get("route")
-			profitFactor, ok5 := record.Get("profitFactor")
-			if !ok2 || !ok3 || !ok4 || !ok5 {
+			assetIds, ok1 := record.Get("assetIds")
+			costs, ok2 := record.Get("costs")
+			profitFactor, ok3 := record.Get("profitFactor")
+			if !ok1 || !ok2 || !ok3 {
 				continue
 			}
 
@@ -99,7 +92,6 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			}
 
 			// Create ArbCycle from the result
-			// names := assetNames.([]interface{})
 			ids := assetIds.([]interface{})
 			costsList := costs.([]interface{})
 
@@ -117,6 +109,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 
 			cycle := make(ArbCycle, len(ids)-1) // -1 because the last asset is the same as first
 
+			// query nodepool info based on returned assetIds and negLogRates
 			for i := 0; i < len(ids)-1; i++ {
 				pool, err := fetchPool(ctx, session, 
 					ids[i].(string), 
@@ -131,15 +124,13 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			}
 
 			uniqueCycles[cycleKey] = cycle
-			fmt.Println(cycle)
 			// names := make([]string, len(assetNames.([]interface{})))
 			// for i, v := range assetNames.([]interface{}) {
 			// 	names[i] = v.(string)
 			// }
 			// fmt.Printf("\n\nFound arbitrage opportunity along the following route with profit factor: %v\n %v",
 			// 	profitFactor, strings.Join(names, "->"))
-			fmt.Printf("\nDetailed information about each Node on the route:\n%v", route)
-			fmt.Printf("\nAssetIds each node for facilitating arb:\n%v\n", ids)
+			fmt.Printf("\nAssetIds of each node for facilitating arb:\n%v\n", ids)
 			fmt.Printf("\nnegLogRate for each liquidity pool necessary for facilitating arb:\n%v\n\n", individualRates)
 			totalOpportunities++
 		}
@@ -202,7 +193,7 @@ func (db *GraphDB) fetchStartAssets(ctx context.Context, session neo4j.SessionWi
 
 func fetchPool(ctx context.Context, session neo4j.SessionWithContext, sourceId string, targetId string, negLogRate float64) (LiquidityPool, error) {
     // Set a small tolerance for float comparison
-    const tolerance = 0.0001
+    const tolerance = 5
     
     result, err := session.Run(ctx, `
         MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
