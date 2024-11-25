@@ -78,12 +78,12 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 		// Process results for this asset
 		for result.Next(ctx) {
 			record := result.Record()
-			assetNames, ok1 := record.Get("assetNames")
+			// assetNames, ok1 := record.Get("assetNames")
 			assetIds, ok2 := record.Get("assetIds")
 			costs, ok3 := record.Get("costs")
 			route, ok4 := record.Get("route")
 			profitFactor, ok5 := record.Get("profitFactor")
-			if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
+			if !ok2 || !ok3 || !ok4 || !ok5 {
 				continue
 			}
 
@@ -99,16 +99,29 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			}
 
 			// Create ArbCycle from the result
-			names := assetNames.([]interface{})
+			// names := assetNames.([]interface{})
 			ids := assetIds.([]interface{})
 			costsList := costs.([]interface{})
-			cycle := make(ArbCycle, len(names)-1) // -1 because the last asset is the same as first
+
+			// Calculate individual negLogRates
+			individualRates := make([]float64, len(costsList))
+			for i := 0; i < len(costsList); i++ {
+				// The individual rate is the difference between consecutive cumulative costs
+				// For the first element, it's just the first cumulative cost
+				if i == 0 {
+					individualRates[i] = costsList[i].(float64)
+				} else {
+					individualRates[i] = costsList[i].(float64) - costsList[i-1].(float64)
+				}
+			}
+
+			cycle := make(ArbCycle, len(ids)-1) // -1 because the last asset is the same as first
 
 			for i := 0; i < len(ids)-1; i++ {
 				pool, err := fetchPool(ctx, session, 
 					ids[i].(string), 
 					ids[i+1].(string), 
-					costsList[i+1].(float64),
+					individualRates[i+1],
 				)
 				if err != nil {
 					fmt.Printf("Error fetching pool: %v\n", err)
@@ -127,7 +140,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			// 	profitFactor, strings.Join(names, "->"))
 			fmt.Printf("\nDetailed information about each Node on the route:\n%v", route)
 			fmt.Printf("\nAssetIds each node for facilitating arb:\n%v\n", ids)
-			fmt.Printf("\nnegLogRate for each liquidity pool necessary for facilitating arb:\n%v\n\n", costs)
+			fmt.Printf("\nnegLogRate for each liquidity pool necessary for facilitating arb:\n%v\n\n", individualRates)
 			totalOpportunities++
 		}
 	}
@@ -188,30 +201,37 @@ func (db *GraphDB) fetchStartAssets(ctx context.Context, session neo4j.SessionWi
 }
 
 func fetchPool(ctx context.Context, session neo4j.SessionWithContext, sourceId string, targetId string, negLogRate float64) (LiquidityPool, error) {
+    // Set a small tolerance for float comparison
+    const tolerance = 0.0001
+    
     result, err := session.Run(ctx, `
         MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
         WHERE a1.id = $sourceId 
-        AND r.negLogRate = $negLogRate 
         AND a2.id = $targetId
+        AND abs(r.negLogRate - $negLogRate) < $tolerance
         RETURN DISTINCT
             a1.name as sourceName,
             a1.id as sourceId,
             a2.name as targetName,
             a2.id as targetId,
             r.address as poolAddress,
-            r.exchange as exchange
+            r.exchange as exchange,
+            r.chain as chain,
+            r.negLogRate as actualRate
+        ORDER BY abs(r.negLogRate - $negLogRate)
         LIMIT 1
     `, map[string]interface{}{
         "sourceId":   sourceId,
         "negLogRate": negLogRate,
         "targetId":   targetId,
+        "tolerance":  tolerance,
     })
     if err != nil {
         return LiquidityPool{}, fmt.Errorf("error querying pool details: %w", err)
     }
 
     if !result.Next(ctx) {
-        return LiquidityPool{}, fmt.Errorf("no pool found for source: %s, target: %s, negLogRate %v", sourceId, targetId, negLogRate)
+        return LiquidityPool{}, fmt.Errorf("no pool found for source: %s, target: %s with negLogRate close to %v", sourceId, targetId, negLogRate)
     }
 
     record := result.Record()
