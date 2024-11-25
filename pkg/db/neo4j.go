@@ -8,7 +8,7 @@ import (
 
 	"watcher/pkg/models"
 
-    "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 type Neo4jConfig struct {
@@ -116,6 +116,7 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
         s1.targetName = $asset2Name
 
     MERGE (a2)-[s2:PROVIDES_SWAP {
+		chain: $chain,
         exchange: $exchange,
         address: $address
     }]->(a1)
