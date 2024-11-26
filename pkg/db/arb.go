@@ -3,9 +3,9 @@ package db
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"math/big"
+	"strings"
 )
 
 type Asset struct {
@@ -13,23 +13,37 @@ type Asset struct {
 	AssetId string
 }
 
+type LiquidityPool struct {
+	SourceAssetName string
+	SourceAssetId   string
+	SourceLiquidity string
+	TargetAssetName string
+	TargetAssetId   string
+	TargetLiquidity string
+	PoolAddress     string
+	PoolExchange    string
+	Chain           string
+}
+
+type ArbCycle []LiquidityPool
+
 func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
-	assets, err := db.fetchStartAssets(ctx, session)
+	assets, err := fetchStartAssets(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to fetch initial asset info: %w", err)
 	}
 
 	// Create transformed graph projection
-	err = db.projectArbNetwork(ctx, session)
+	err = projectArbNetwork(ctx, session)
 	if err != nil {
 		return fmt.Errorf("Error projcting arbitrage network:%w", err)
 	}
 
 	// Use a map to track unique cycles
-	uniqueCycles := make(map[string]struct{})
+	uniqueCycles := make(map[string]ArbCycle)
 	totalOpportunities := 0
 
 	// Check each asset for arbitrage opportunities
@@ -43,7 +57,21 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
             })
             YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, route, isNegativeCycle
             WHERE exp(-totalCost) > 1
-            RETURN DISTINCT exp(-totalCost) as profitFactor, [nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS assetNames, [nodeId IN nodeIds | gds.util.asNode(nodeId).id] AS assetIds, costs, nodes(route) as route
+            RETURN DISTINCT
+				totalCost as totalCost,
+				exp(-totalCost) as profitFactor, 
+				[nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS assetNames, 
+				[nodeId IN nodeIds | gds.util.asNode(nodeId).id] AS assetIds, 
+				costs, 
+				nodes(route) as route, 
+				[i IN range(0, size(costs)-2) | 
+					toString(
+						apoc.number.exact.sub(
+							apoc.number.format(costs[i+1], '#.##################'),
+							apoc.number.format(costs[i], '#.##################')
+						)
+					)
+				] AS edgeWeights
             ORDER BY profitFactor DESC
             LIMIT $limit
         `, map[string]interface{}{
@@ -61,7 +89,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			assetNames, ok1 := record.Get("assetNames")
 			assetIds, ok2 := record.Get("assetIds")
 			costs, ok3 := record.Get("costs")
-			route, ok4 := record.Get("route")
+			edgeWeights, ok4 := record.Get("edgeWeights")
 			profitFactor, ok5 := record.Get("profitFactor")
 			if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
 				continue
@@ -77,16 +105,47 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			if _, exists := uniqueCycles[cycleKey]; exists {
 				continue
 			}
-			uniqueCycles[cycleKey] = struct{}{}
 
+			ids := assetIds.([]interface{})
+			costsList := costs.([]interface{})
+
+			// Calculate individual negLogRates
+			individualRates := make([]*big.Float, len(costsList))
+			for i := 0; i < len(costsList); i++ {
+				if i == 0 {
+					individualRates[i], _ = new(big.Float).SetString(fmt.Sprintf("%v", costsList[i]))
+				} else {
+					curr, _ := new(big.Float).SetString(fmt.Sprintf("%v", costsList[i]))
+					prev, _ := new(big.Float).SetString(fmt.Sprintf("%v", costsList[i-1]))
+					individualRates[i] = new(big.Float).Sub(curr, prev)
+				}
+			}
+
+			cycle := make(ArbCycle, len(ids)-1) // -1 because the last asset is the same as first
+
+			// query nodepool info based on returned assetIds and negLogRates
+			for i := 0; i < len(ids)-1; i++ {
+				pool, err := fetchPool(ctx, session,
+					ids[i].(string),
+					ids[i+1].(string),
+					individualRates[i+1],
+				)
+				if err != nil {
+					fmt.Printf("Error fetching pool: %v\n", err)
+					continue
+				}
+				cycle[i] = pool
+			}
+
+			uniqueCycles[cycleKey] = cycle
 			names := make([]string, len(assetNames.([]interface{})))
 			for i, v := range assetNames.([]interface{}) {
 				names[i] = v.(string)
 			}
-			fmt.Printf("\n\nFound arbitrage opportunity along the following route with profit factor: %v\n %v",
+			fmt.Printf("\n\nFound arbitrage opportunity along the following route with profit factor: %v\n %v\n ",
 				profitFactor, strings.Join(names, "->"))
-			fmt.Printf("\nDetailed information about each Node on the route:\n%v", route)
-			fmt.Printf("\nnegLogRate for each liquidity pool necessary for facilitating arb:\n%v\n\n", costs)
+			fmt.Printf("\nEdgeweights: %v\n", edgeWeights)
+			fmt.Printf("\nindividualRates: %v\n", individualRates)
 			totalOpportunities++
 		}
 	}
@@ -94,7 +153,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
 
 	// Clean up graph projection
-	err = db.dropArbNetwork(ctx, session)
+	err = dropArbNetwork(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to clean up arbitrage_network projection: %w", err)
 	}
@@ -102,7 +161,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	return nil
 }
 
-func (db *GraphDB) fetchStartAssets(ctx context.Context, session neo4j.SessionWithContext) ([]Asset, error) {
+func fetchStartAssets(ctx context.Context, session neo4j.SessionWithContext) ([]Asset, error) {
 	// Get all assets and their node IDs
 	result, err := session.Run(ctx, `
         MATCH (a:Asset) 
@@ -146,23 +205,87 @@ func (db *GraphDB) fetchStartAssets(ctx context.Context, session neo4j.SessionWi
 	return assets, nil
 }
 
-func (db *GraphDB) projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
+func fetchPool(ctx context.Context, session neo4j.SessionWithContext, sourceId string, targetId string, negLogRate *big.Float) (LiquidityPool, error) {
+	const tolerance = 1
+
+	result, err := session.Run(ctx, `
+		MATCH (a1:Asset)-[r:PROVIDES_SWAP]->(a2:Asset)
+		WHERE a1.id = $sourceId 
+		AND a2.id = $targetId
+		// AND abs(toFloat(apoc.number.exact.sub(toString(r.negLogRate), $negLogRate))) < $tolerance
+		WITH a1, a2, r, 
+			abs(toFloat(apoc.number.exact.sub(toString(r.negLogRate), $negLogRate))) as rateDiff
+		RETURN DISTINCT
+			a1.name as sourceName,
+			a1.id as sourceId,
+			a2.name as targetName,
+			a2.id as targetId,
+			r.exchangeRate as exchangeRate,
+			r.address as poolAddress,
+			r.exchange as exchange,
+			r.chain as chain,
+			toString(r.negLogRate) as actualRate,
+			toString(r.sourceLiquidity) as sourceLiquidity,
+			toString(r.targetLiquidity) as targetLiquidity,
+			toString(rateDiff) as rateDiff
+		ORDER BY exchangeRate DESC
+		LIMIT 1
+    `, map[string]interface{}{
+		"sourceId":   sourceId,
+		"negLogRate": negLogRate.String(),
+		"targetId":   targetId,
+		"tolerance":  tolerance,
+	})
+
+	if err != nil {
+		return LiquidityPool{}, fmt.Errorf("error querying pool details: %w", err)
+	}
+
+	if !result.Next(ctx) {
+		return LiquidityPool{}, fmt.Errorf("no pool found for source: %s, target: %s with negLogRate %v", sourceId, targetId, negLogRate.String())
+	}
+
+	record := result.Record()
+	sourceName, ok1 := record.Get("sourceName")
+	sourceAssetId, ok2 := record.Get("sourceId")
+	targetName, ok3 := record.Get("targetName")
+	targetAssetId, ok4 := record.Get("targetId")
+	poolAddress, ok5 := record.Get("poolAddress")
+	exchange, ok6 := record.Get("exchange")
+	sourceLiquidity, ok7 := record.Get("sourceLiquidity")
+	targetLiquidity, ok8 := record.Get("targetLiquidity")
+
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 || !ok8 {
+		return LiquidityPool{}, fmt.Errorf("missing required fields in pool record")
+	}
+
+	pool := LiquidityPool{
+		SourceAssetName: sourceName.(string),
+		SourceAssetId:   sourceAssetId.(string),
+		SourceLiquidity: sourceLiquidity.(string),
+		TargetAssetName: targetName.(string),
+		TargetAssetId:   targetAssetId.(string),
+		TargetLiquidity: targetLiquidity.(string),
+		PoolAddress:     poolAddress.(string),
+		PoolExchange:    exchange.(string),
+	}
+
+	return pool, nil
+}
+
+func projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
 	_, err := session.Run(ctx, `
-        CALL gds.graph.project(
-            'arbitrage_network',
-            'Asset',
-            {
-                PROVIDES_SWAP: {
-                    orientation: 'NATURAL',
-                    properties: {
-                        negLogRate: {
-                            property: 'negLogRate',
-                            defaultValue: 1.0
-                        }
-                    }
-                }
-            }
-        )
+		MATCH (source:Asset)-[r:PROVIDES_SWAP]->(target:Asset)
+		RETURN gds.graph.project(
+			'arbitrage_network',
+			source,
+			target,
+			{ 
+				relationshipProperties: r { 
+					.negLogRate 
+				} 
+			}
+		)
     `, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create gds graph projection against DB: %w", err)
@@ -171,7 +294,7 @@ func (db *GraphDB) projectArbNetwork(ctx context.Context, session neo4j.SessionW
 	return nil
 }
 
-func (db *GraphDB) dropArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
+func dropArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
 	_, err := session.Run(ctx, `
         CALL gds.graph.drop('arbitrage_network')
     `, nil)
