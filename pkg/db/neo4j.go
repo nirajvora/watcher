@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 
 	"watcher/pkg/models"
 
@@ -72,7 +71,8 @@ func (db *GraphDB) SetupSchema(ctx context.Context) error {
 
 	indexes := []string{
 		"CREATE INDEX asset_symbol IF NOT EXISTS FOR (a:Asset) ON (a.id)",
-		"CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.negLogRate)",
+		"CREATE INDEX pool_exchange_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchangeRate)",
+		"CREATE INDEX pool_neg_log_rate IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.negLogRate)",
 		"CREATE INDEX exchange_asset_pair_unique IF NOT EXISTS FOR ()-[r:PROVIDES_SWAP]-() ON (r.exchange, r.address)",
 	}
 
@@ -139,12 +139,12 @@ func (db *GraphDB) StorePool(ctx context.Context, pool models.Pool) error {
 		"asset1Name":                   pool.Asset1Name,
 		"asset2Id":                     pool.Asset2ID,
 		"asset2Name":                   pool.Asset2Name,
-		"liquidity1":                   pool.Liquidity1,
-		"liquidity2":                   pool.Liquidity2,
-		"exchangeRate":                 pool.ExchangeRate,
-		"reciprocalExchangeRate":       pool.ReciprocalExchangeRate,
-		"negLogExchangeRate":           -math.Log(pool.ExchangeRate),
-		"negLogReciprocalExchangeRate": -math.Log(pool.ReciprocalExchangeRate),
+		"liquidity1":                   pool.Liquidity1.String(),
+		"liquidity2":                   pool.Liquidity2.String(),
+		"exchangeRate":                 pool.ExchangeRate.String(),
+		"reciprocalExchangeRate":       pool.ReciprocalExchangeRate.String(),
+		"negLogExchangeRate":           pool.NegativeLogExchangeRate().String(),
+		"negLogReciprocalExchangeRate": pool.NegativeLogReciprocalExchangeRate().String(),
 	}
 
 	_, err := session.Run(ctx, query, params)
