@@ -3,13 +3,15 @@ package tinyman
 import (
 	"context"
 	"fmt"
-	"golang.org/x/time/rate"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"watcher/pkg/client"
 	"watcher/pkg/models"
+
+	"golang.org/x/time/rate"
+
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -62,24 +64,24 @@ type TinymanPool struct {
 	CurrentUnclaimedProtocolFees      string  `json:"current_unclaimed_protocol_fees"`
 	UnclaimedAsset1ProtocolFees       *string `json:"unclaimed_asset_1_protocol_fees"`
 	UnclaimedAsset2ProtocolFees       *string `json:"unclaimed_asset_2_protocol_fees"`
-	CurrentAsset1ReservesInUSD        *string `json:"current_asset_1_reserves_in_usd"` // Changed to *string
-	CurrentAsset2ReservesInUSD        *string `json:"current_asset_2_reserves_in_usd"` // Changed to *string
+	CurrentAsset1ReservesInUSD        *string `json:"current_asset_1_reserves_in_usd"`
+	CurrentAsset2ReservesInUSD        *string `json:"current_asset_2_reserves_in_usd"`
 	V2Address                         *string `json:"v2_address"`
 	CreationRound                     string  `json:"creation_round"`
 	CreationDatetime                  string  `json:"creation_datetime"`
-	LiquidityInUSD                    *string `json:"liquidity_in_usd"` // Changed to *string
+	LiquidityInUSD                    *string `json:"liquidity_in_usd"`
 	LastDayVolumeInUSD                string  `json:"last_day_volume_in_usd"`
 	LastWeekVolumeInUSD               string  `json:"last_week_volume_in_usd"`
 	LastDayFeesInUSD                  string  `json:"last_day_fees_in_usd"`
 	ActiveStakingProgramCount         int     `json:"active_staking_program_count"`
-	AnnualPercentageRate              *string `json:"annual_percentage_rate"`                // Changed to *string
-	AnnualPercentageYield             *string `json:"annual_percentage_yield"`               // Changed to *string
-	FolksLendingAnnualPercentageRate  *string `json:"folks_lending_annual_percentage_rate"`  // Changed to *string
-	FolksLendingAnnualPercentageYield *string `json:"folks_lending_annual_percentage_yield"` // Changed to *string
-	StakingTotalAnnualPercentageRate  *string `json:"staking_total_annual_percentage_rate"`  // Changed to *string
-	StakingTotalAnnualPercentageYield *string `json:"staking_total_annual_percentage_yield"` // Changed to *string
-	TotalAnnualPercentageRate         *string `json:"total_annual_percentage_rate"`          // Changed to *string
-	TotalAnnualPercentageYield        *string `json:"total_annual_percentage_yield"`         // Changed to *string
+	AnnualPercentageRate              *string `json:"annual_percentage_rate"`
+	AnnualPercentageYield             *string `json:"annual_percentage_yield"`
+	FolksLendingAnnualPercentageRate  *string `json:"folks_lending_annual_percentage_rate"`
+	FolksLendingAnnualPercentageYield *string `json:"folks_lending_annual_percentage_yield"`
+	StakingTotalAnnualPercentageRate  *string `json:"staking_total_annual_percentage_rate"`
+	StakingTotalAnnualPercentageYield *string `json:"staking_total_annual_percentage_yield"`
+	TotalAnnualPercentageRate         *string `json:"total_annual_percentage_rate"`
+	TotalAnnualPercentageYield        *string `json:"total_annual_percentage_yield"`
 	IsFolksLendingPool                bool    `json:"is_folks_lending_pool"`
 }
 
@@ -192,27 +194,24 @@ func (c *Client) FetchPools(ctx context.Context) ([]models.Pool, error) {
 				continue
 			}
 
-			// Convert string reserves to float64
-			reserves1, err := strconv.ParseFloat(*p.CurrentAsset1Reserves, 64)
+			// Parse strings to decimal
+			reserves1, err := decimal.NewFromString(*p.CurrentAsset1Reserves)
 			if err != nil {
 				continue
 			}
-			reserves2, err := strconv.ParseFloat(*p.CurrentAsset2Reserves, 64)
+			reserves2, err := decimal.NewFromString(*p.CurrentAsset2Reserves)
 			if err != nil {
 				continue
 			}
 
-			// Calculate and validate exchange rates
-			var exchangeRate, reciprocalExchangeRate float64
-			if reserves2 > 0 {
-				exchangeRate = reserves1 / reserves2
-			}
-			if reserves1 > 0 {
-				reciprocalExchangeRate = reserves2 / reserves1
-			}
-			if exchangeRate == 0 || reciprocalExchangeRate == 0 {
+			// Check for zero reserves
+			if reserves1.IsZero() || reserves2.IsZero() {
 				continue
 			}
+
+			// Calculate exchange rates
+			exchangeRate := reserves1.Div(reserves2)
+			reciprocalExchangeRate := reserves2.Div(reserves1)
 
 			pool := models.Pool{
 				Address:                p.Address,
