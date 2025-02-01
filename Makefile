@@ -7,10 +7,6 @@ all: graph
 fmt:
 	gofmt -s -w .
 
-# Run UI application
-ui:
-	go run cmd/ui/main.go
-
 # Run graph application
 graph:
 	go run cmd/dexgraph/main.go

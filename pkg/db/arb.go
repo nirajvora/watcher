@@ -56,7 +56,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
                 relationshipWeightProperty: 'negLogRate'
             })
             YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, route, isNegativeCycle
-            WHERE exp(-totalCost) > 1
+            WHERE exp(-totalCost) > 1.001
             RETURN DISTINCT
 				exp(-totalCost) as profitFactor, 
 				[nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS assetNames, 
