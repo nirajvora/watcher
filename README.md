@@ -15,7 +15,6 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 │   └── images/            # Assets for this README
 ├── cmd/
 │   ├── dexgraph/          # Application entrypoint
-│   └── ui/                # Web UI server
 ├── pkg/
 │   ├── client/            # Shared HTTP client
 │   ├── db/                # Database operations
@@ -47,11 +46,6 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
    - Shared data structures
    - Type definitions for pools and assets
 
-5. **Web UI** (`cmd/ui/` and `static/`)
-   - Graph visualization interface served from static/index.html
-   - Interactive view of pool relationships
-   - Web-based access to Neo4j data
-
 ## Getting Started
 
 ### Prerequisites
@@ -71,17 +65,6 @@ docker compose up -d
 3. Build and run the main application:
 ```bash
 make graph
-```
-
-4. Start the UI visualization server:
-```bash
-make ui
-```
-This will serve the static/index.html file containing the graph visualization interface.
-
-5. Access the graph visualization interface at:
-```
-http://localhost:8080
 ```
 
 ### Neo4j Database Access
@@ -176,7 +159,6 @@ Common issues and solutions:
 - [Neo4j Documentation](https://neo4j.com/docs/)
 - [Go Documentation](https://golang.org/doc/)
 - [Tinyman API Documentation](https://docs.tinyman.org/)
-- [d3.js Force Documentation](https://d3js.org/d3-force)
 
 ## Misc.
 
