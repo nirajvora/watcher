@@ -20,7 +20,6 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 │   ├── db/                # Database operations
 │   ├── dex/               # DEX interfaces and implementations
 │   └── models/            # Shared data models
-├── static/                # Static web assets
 └── docker-compose.yaml    # Local development environment
 ```
 
