@@ -37,7 +37,8 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	}
 
 	// Create transformed graph projection
-	err = projectArbNetwork(ctx, session)
+	graphName := "arbitrage_network"
+	err = projectArbNetwork(ctx, session, graphName)
 	if err != nil {
 		return fmt.Errorf("Error projcting arbitrage network:%w", err)
 	}
@@ -51,7 +52,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 		// fmt.Printf("\nChecking arbitrage opportunities starting from asset %s...\n", asset.AssetId)
 
 		result, err := session.Run(ctx, `
-            CALL gds.bellmanFord.stream('arbitrage_network', {
+            CALL gds.bellmanFord.stream($graphName, {
                 sourceNode: $startNodeId,
                 relationshipWeightProperty: 'negLogRate'
             })
@@ -74,6 +75,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
         `, map[string]interface{}{
 			"limit":       limit,
 			"startNodeId": asset.NodeId,
+			"graphName":   graphName,
 		})
 		if err != nil {
 			fmt.Printf("Error checking asset %s: %v\n", asset.AssetId, err)
@@ -135,9 +137,9 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
 
 	// Clean up graph projection
-	err = dropArbNetwork(ctx, session)
+	err = dropArbNetwork(ctx, session, graphName)
 	if err != nil {
-		return fmt.Errorf("failed to clean up arbitrage_network projection: %w", err)
+		return fmt.Errorf("failed to clean up arbitrage network projection: %w", err)
 	}
 
 	return nil
@@ -255,17 +257,19 @@ func fetchPool(ctx context.Context, session neo4j.SessionWithContext, sourceId s
 	return pool, nil
 }
 
-func projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
+func projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext, graphName string) error {
 	_, err := session.Run(ctx, `
 		CALL gds.graph.project.cypher(
-			'arbitrage_network',
+			$graphName,
 			'MATCH (n:Asset) RETURN id(n) AS id',
 			'MATCH (s:Asset)-[r:PROVIDES_SWAP]->(t:Asset) 
 			RETURN id(s) AS source, 
 					id(t) AS target, 
 					toFloat(r.negLogRate) AS negLogRate'
 		)
-    `, nil)
+    `, map[string]interface{}{
+		"graphName": graphName,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create gds graph projection against DB: %w", err)
 	}
@@ -273,10 +277,12 @@ func projectArbNetwork(ctx context.Context, session neo4j.SessionWithContext) er
 	return nil
 }
 
-func dropArbNetwork(ctx context.Context, session neo4j.SessionWithContext) error {
+func dropArbNetwork(ctx context.Context, session neo4j.SessionWithContext, graphName string) error {
 	_, err := session.Run(ctx, `
-        CALL gds.graph.drop('arbitrage_network')
-    `, nil)
+        CALL gds.graph.drop($graphName)
+    `, map[string]interface{}{
+		"graphName": graphName,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to drop gds graph projection from DB: %w", err)
 	}
