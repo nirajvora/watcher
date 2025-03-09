@@ -25,9 +25,12 @@ type LiquidityPool struct {
 	Chain           string
 }
 
-type ArbCycle []LiquidityPool
+type ArbCycle struct {
+	Pools        []LiquidityPool
+	ProfitFactor float64
+}
 
-func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
+func (db *GraphDB) FindArbPaths(ctx context.Context, limit int, startTokens []string) error {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
@@ -107,7 +110,7 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 
 			ids := assetIds.([]interface{})
 			var individualrates = edgeWeights.([]interface{})
-			cycle := make(ArbCycle, len(ids)-1) // -1 because the last asset is the same as first
+			pools := make([]LiquidityPool, len(ids)-1) // -1 because the last asset is the same as first
 
 			// query nodepool info based on returned assetIds and negLogRates
 			for i := 0; i < len(ids)-1; i++ {
@@ -120,7 +123,13 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 					fmt.Printf("Error fetching pool: %v\n", err)
 					continue
 				}
-				cycle[i] = pool
+				pools[i] = pool
+			}
+			
+			// Create ArbCycle with pools and profit factor
+			cycle := ArbCycle{
+				Pools:        pools,
+				ProfitFactor: profitFactor.(float64),
 			}
 
 			uniqueCycles[cycleKey] = cycle
@@ -134,7 +143,54 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 		}
 	}
 
-	fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
+	// Filter arbitrage opportunities based on startTokens if provided
+	if len(startTokens) > 0 {
+		// Create a map for faster lookup
+		startTokenMap := make(map[string]bool)
+		for _, token := range startTokens {
+			startTokenMap[token] = true
+		}
+
+		// Filter cycles that start with one of the specified tokens
+		filteredCycles := make(map[string]ArbCycle)
+		filteredOpportunities := 0
+
+		for key, cycle := range uniqueCycles {
+			if len(cycle.Pools) > 0 {
+				// Check if the first asset in the cycle is in our startTokens list
+				if startTokenMap[cycle.Pools[0].SourceAssetName] {
+					filteredCycles[key] = cycle
+					filteredOpportunities++
+				}
+			}
+		}
+
+		// Print filtered results
+		fmt.Printf("\nFiltered arbitrage opportunities (starting with %v): %d out of %d total\n", 
+			startTokens, filteredOpportunities, totalOpportunities)
+
+		// If we filtered, print the filtered opportunities again for clarity
+		if filteredOpportunities > 0 {
+			fmt.Println("\nFiltered arbitrage paths:")
+			for _, cycle := range filteredCycles {
+				if len(cycle.Pools) > 0 {
+					// Build path string
+					pathNames := make([]string, len(cycle.Pools)+1)
+					pathNames[0] = cycle.Pools[0].SourceAssetName
+					for i, pool := range cycle.Pools {
+						pathNames[i+1] = pool.TargetAssetName
+					}
+
+					// Print the arbitrage path with profit factor
+					pathString := strings.Join(pathNames, "->")
+					fmt.Printf("\nFound filtered arbitrage opportunity along the following route with profit factor: %v\n %s\n", 
+						cycle.ProfitFactor, pathString)
+				}
+			}
+		}
+	} else {
+		fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
+	}
 
 	// Clean up graph projection
 	err = dropArbNetwork(ctx, session, graphName)
@@ -143,6 +199,38 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 	}
 
 	return nil
+}
+
+// getAssetName fetches the name of an asset by its ID
+func getAssetName(ctx context.Context, session neo4j.SessionWithContext, assetId string) (string, error) {
+	result, err := session.Run(ctx, `
+		MATCH (a:Asset) 
+		WHERE a.id = $assetId
+		RETURN a.name as assetName
+	`, map[string]interface{}{
+		"assetId": assetId,
+	})
+	
+	if err != nil {
+		return "", fmt.Errorf("failed to get asset name: %w", err)
+	}
+	
+	if result.Next(ctx) {
+		record := result.Record()
+		assetName, ok := record.Get("assetName")
+		if !ok {
+			return "", fmt.Errorf("asset name not found in record")
+		}
+		
+		name, ok := assetName.(string)
+		if !ok {
+			return "", fmt.Errorf("asset name is not a string")
+		}
+		
+		return name, nil
+	}
+	
+	return "", fmt.Errorf("no asset found with ID: %s", assetId)
 }
 
 func fetchStartAssets(ctx context.Context, session neo4j.SessionWithContext) ([]Asset, error) {

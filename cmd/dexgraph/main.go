@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
+	"strings"
 	"time"
 	"watcher/pkg/db"
 	"watcher/pkg/dex"
@@ -56,8 +58,32 @@ func main() {
 	log.Printf("Successfully processed %d pools", stored)
 
 	log.Println("Finding Arbitrage Opportunities")
-	limit := 5
-	if err := database.FindArbPaths(ctx, limit); err != nil {
+	
+	// Parse command line flags
+	limitPtr := flag.Int("limit", 5, "Limit the number of arbitrage paths to find per asset")
+	tokensPtr := flag.String("tokens", "", "Comma-separated list of tokens to filter by (e.g., 'USDC,ALGO')")
+	flag.Parse()
+	
+	// Parse the tokens from the command line flag
+	var filterTokens []string
+	if *tokensPtr != "" {
+		filterTokens = strings.Split(*tokensPtr, ",")
+		// Trim whitespace from each token
+		for i := range filterTokens {
+			filterTokens[i] = strings.TrimSpace(filterTokens[i])
+		}
+	} else {
+		// Default tokens if none specified
+		filterTokens = []string{"USDC", "ALGO"}
+	}
+	
+	if len(filterTokens) > 0 {
+		log.Printf("Filtering arbitrage paths to only show those starting with: %v", filterTokens)
+	} else {
+		log.Println("Showing all arbitrage paths (no filter applied)")
+	}
+	
+	if err := database.FindArbPaths(ctx, *limitPtr, filterTokens); err != nil {
 		log.Printf("Failed to find arbs: %v", err)
 	}
 }
