@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: neo4j:5.13.0
+    image: neo4j:5.26.5
     container_name: dex-graph-neo4j
     ports:
       - "7474:7474"  # HTTP
@@ -11,6 +11,7 @@ services:
       - NEO4J_apoc_import_file_enabled=true
       - NEO4J_apoc_import_file_use__neo4j__config=true
       - NEO4J_PLUGINS=["apoc","graph-data-science"]
+      - GDS_VERSION=2.13
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
