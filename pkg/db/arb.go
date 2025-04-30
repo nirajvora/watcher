@@ -27,25 +27,24 @@ type LiquidityPool struct {
 
 type ArbCycle []LiquidityPool
 
-func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
+func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) (map[string]ArbCycle, error) {
 	session := db.driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
 	assets, err := fetchStartAssets(ctx, session)
 	if err != nil {
-		return fmt.Errorf("failed to fetch initial asset info: %w", err)
+		return nil, fmt.Errorf("failed to fetch initial asset info: %w", err)
 	}
 
 	// Create transformed graph projection
 	graphName := "arbitrage_network"
 	err = projectArbNetwork(ctx, session, graphName)
 	if err != nil {
-		return fmt.Errorf("Error projcting arbitrage network:%w", err)
+		return nil, fmt.Errorf("Error projcting arbitrage network:%w", err)
 	}
 
 	// Use a map to track unique cycles
 	uniqueCycles := make(map[string]ArbCycle)
-	totalOpportunities := 0
 
 	// Check each asset for arbitrage opportunities
 	for _, asset := range assets {
@@ -85,12 +84,11 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 		// Process results for this asset
 		for result.Next(ctx) {
 			record := result.Record()
-			assetNames, ok1 := record.Get("assetNames")
-			assetIds, ok2 := record.Get("assetIds")
-			edgeWeights, ok3 := record.Get("edgeWeights")
-			profitFactor, ok4 := record.Get("profitFactor")
+			assetIds, ok1 := record.Get("assetIds")
+			edgeWeights, ok2 := record.Get("edgeWeights")
+			profitFactor, ok3 := record.Get("profitFactor")
 
-			if !ok1 || !ok2 || !ok3 || !ok4 {
+			if !ok1 || !ok2 || !ok3 {
 				continue
 			}
 
@@ -124,25 +122,16 @@ func (db *GraphDB) FindArbPaths(ctx context.Context, limit int) error {
 			}
 
 			uniqueCycles[cycleKey] = cycle
-			names := make([]string, len(assetNames.([]interface{})))
-			for i, v := range assetNames.([]interface{}) {
-				names[i] = v.(string)
-			}
-			fmt.Printf("\n\nFound arbitrage opportunity along the following route with profit factor: %v\n %v\n ",
-				profitFactor, strings.Join(names, "->"))
-			totalOpportunities++
 		}
 	}
-
-	fmt.Printf("\nTotal arbitrage opportunities found: %d\n", totalOpportunities)
 
 	// Clean up graph projection
 	err = dropArbNetwork(ctx, session, graphName)
 	if err != nil {
-		return fmt.Errorf("failed to clean up arbitrage network projection: %w", err)
+		return nil, fmt.Errorf("failed to clean up arbitrage network projection: %w", err)
 	}
 
-	return nil
+	return uniqueCycles, nil
 }
 
 func fetchStartAssets(ctx context.Context, session neo4j.SessionWithContext) ([]Asset, error) {

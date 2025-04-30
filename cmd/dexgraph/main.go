@@ -57,7 +57,13 @@ func main() {
 
 	log.Println("Finding Arbitrage Opportunities")
 	limit := 5
-	if err := database.FindArbPaths(ctx, limit); err != nil {
+	uniqueCycles, err := database.FindArbPaths(ctx, limit)
+	if err != nil {
 		log.Printf("Failed to find arbs: %v", err)
+	}
+
+	log.Println("Filtering for desired Opporunities")
+	for cycleKey, cycle := range uniqueCycles {
+		log.Printf("Cycle %s: %v", cycleKey, cycle)
 	}
 }
