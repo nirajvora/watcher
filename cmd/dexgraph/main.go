@@ -62,8 +62,9 @@ func main() {
 		log.Printf("Failed to find arbs: %v", err)
 	}
 
-	log.Println("Filtering for desired Opporunities")
-	for cycleKey, cycle := range uniqueCycles {
+	log.Println("Filtering for desired Opporunities -- Starting with ALGO, USDC or USDT")
+	filteredCycles := db.FilterArbPathsByStartAssetIds(ctx, uniqueCycles, []string{"0", "31566704", "312769"})
+	for cycleKey, cycle := range filteredCycles {
 		log.Printf("Cycle %s: %v", cycleKey, cycle)
 	}
 }

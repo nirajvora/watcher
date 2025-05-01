@@ -19,7 +19,7 @@ const (
 	batchSize = 10
 
 	// Rate limiting constants
-	requestsPerSecond = 2               // Limit to 2 requests per second
+	requestsPerSecond = 5               // Limit to 2 requests per second
 	burstSize         = 1               // No bursting allowed
 	retryAttempts     = 3               // Number of retries for rate-limited requests
 	retryDelay        = time.Second * 2 // Wait between retries
