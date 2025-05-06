@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 	"watcher/pkg/db"
 	"watcher/pkg/dex"
@@ -63,8 +65,16 @@ func main() {
 	}
 
 	log.Println("Filtering for desired Opporunities -- Starting with ALGO, USDC or USDT")
-	filteredCycles := db.FilterArbPathsByStartAssetIds(ctx, uniqueCycles, []string{"0", "31566704", "312769"})
+	filteredCycles := db.FilterArbPathsByStartAssetIds(uniqueCycles, []string{"0", "31566704", "312769"})
 	for cycleKey, cycle := range filteredCycles {
-		log.Printf("Cycle %s: %v", cycleKey, cycle)
+		profitFactor := strings.Split(cycleKey, ":")[0]
+		startLiquidity := db.CalculateMaxCycleLiquidity(cycle)
+		log.Printf("Found desired cycle with profit factor: %s and start liquidity: %s", profitFactor, startLiquidity)
+		cycleText := ""
+		for _, pool := range cycle {
+			cycleText += fmt.Sprintf("%s -> ", pool.SourceAssetName)
+		}
+		cycleText += cycle[len(cycle)-1].TargetAssetName
+		log.Printf("%s\n", cycleText)
 	}
 }

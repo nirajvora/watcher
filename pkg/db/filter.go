@@ -1,10 +1,6 @@
 package db
 
-import (
-	"context"
-)
-
-func FilterArbPathsByStartAssetIds(ctx context.Context, arbPaths map[string]ArbCycle, startAssetIds []string) map[string]ArbCycle {
+func FilterArbPathsByStartAssetIds(arbPaths map[string]ArbCycle, startAssetIds []string) map[string]ArbCycle {
 	filteredPaths := make(map[string]ArbCycle)
 
 	// Create a map for start assets
