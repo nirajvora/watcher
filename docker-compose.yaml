@@ -21,7 +21,19 @@ services:
       test: ["CMD-SHELL", "neo4j status"]
       interval: 30s
       timeout: 10s
-      retries: 3
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dex-graph-app
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: your-secure-password
 
 volumes:
   neo4j_data:

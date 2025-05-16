@@ -13,12 +13,12 @@ import (
 
 func main() {
 	ctx := context.Background()
-
+	username, password, uri := db.SetConnectionParams()
 	log.Println("Initializing database connection...")
 	database, err := db.NewGraphDB(db.Neo4jConfig{
-		URI:      "neo4j://localhost:7687",
-		Username: "neo4j",
-		Password: "your-secure-password",
+		URI:      uri,
+		Username: username,
+		Password: password,
 	})
 	if err != nil {
 		log.Fatal(err)
