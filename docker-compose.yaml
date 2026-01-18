@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: neo4j:5.26.5
+    image: neo4j:2025.09.0-community
     container_name: dex-graph-neo4j
     ports:
       - "7474:7474"  # HTTP
@@ -11,16 +11,21 @@ services:
       - NEO4J_apoc_import_file_enabled=true
       - NEO4J_apoc_import_file_use__neo4j__config=true
       - NEO4J_PLUGINS=["apoc","graph-data-science"]
-      - GDS_VERSION=2.13.4
+      # Unrestrict GDS procedures for full functionality
+      - NEO4J_dbms_security_procedures_unrestricted=gds.*,apoc.*
+      # Allow GDS procedures
+      - NEO4J_dbms_security_procedures_allowlist=gds.*,apoc.*
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
       - neo4j_import:/var/lib/neo4j/import
       - neo4j_plugins:/plugins
     healthcheck:
-      test: ["CMD-SHELL", "neo4j status"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
       interval: 30s
       timeout: 10s
+      retries: 5
+      start_period: 60s
 
   app:
     build:
