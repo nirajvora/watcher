@@ -1,8 +1,6 @@
-# Watcher- Cryptocurrency DEX Pool Tracker
+# Watcher - Base Chain DEX Arbitrage Detector
 
-![Graph Visualization Example](docs/images/Uatu_the_Watcher.png)
-
-The Watcher project impliments a tool, DEX Graph, a Go-based application that fetches liquidity pool data from various decentralized exchanges (DEXs) and stores it in a Neo4j graph database for analysis. The project is designed to support arbitrage opportunity detection across multiple DEXs.
+A Go-based application that fetches liquidity pool data from Aerodrome V2 on Base chain and stores it in a Neo4j graph database for arbitrage opportunity detection using the Bellman-Ford algorithm.
 
 ## Architecture
 
@@ -10,40 +8,43 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 
 ```
 .
-├── README.md
-├── docs
-│   └── images/            # Assets for this README
 ├── cmd/
-│   ├── dexgraph/          # Application entrypoint
+│   └── dexgraph/          # Application entrypoint
 ├── pkg/
+│   ├── chain/
+│   │   └── base/          # Base chain RPC client
 │   ├── client/            # Shared HTTP client
-│   ├── db/                # Database operations
-│   ├── dex/               # DEX interfaces and implementations
+│   ├── config/            # Configuration and env loading
+│   ├── db/                # Neo4j database operations
+│   ├── dex/
+│   │   └── aerodrome/     # Aerodrome V2 pool fetcher
 │   └── models/            # Shared data models
-└── docker-compose.yaml    # Local development environment
+├── docker-compose.yaml    # Local development environment
+└── .env                   # Environment configuration
 ```
 
 ### Key Components
 
-1. **HTTP Client** (`pkg/client/`)
-   - Shared HTTP client with connection pooling
-   - Configurable timeouts and retry logic
-   - Context support for cancellation
+1. **Base Chain Client** (`pkg/chain/base/`)
+   - Ethereum RPC client for Base network
+   - Rate-limited contract calls
+   - Support for reading contract state
 
-2. **Database Layer** (`pkg/db/`)
+2. **Aerodrome Integration** (`pkg/dex/aerodrome/`)
+   - Fetches all V2 pools from Aerodrome Factory
+   - Retrieves pool reserves and token metadata
+   - Calculates exchange rates with fee adjustment (0.3% fee)
+   - Filters for volatile pools (x*y=k AMM)
+
+3. **Database Layer** (`pkg/db/`)
    - Neo4j graph database integration
-   - Pool storage and retrieval
-   - Schema management
-   - Index optimization
-
-3. **DEX Integrations** (`pkg/dex/`)
-   - Common interface for DEX interactions
-   - Concurrent pool data fetching
-   - Exchange-specific implementations
+   - Pool storage as bidirectional edges between assets
+   - Bellman-Ford negative cycle detection using Neo4j GDS
+   - Schema and index management
 
 4. **Data Models** (`pkg/models/`)
-   - Shared data structures
-   - Type definitions for pools and assets
+   - Pool structure with exchange rates and decimals
+   - Negative log rate calculations for arbitrage detection
 
 ## Getting Started
 
@@ -51,41 +52,91 @@ The Watcher project impliments a tool, DEX Graph, a Go-based application that fe
 
 - Go 1.22 or later
 - Docker and Docker Compose
+- Base chain RPC endpoint (e.g., from Alchemy, QuickNode, etc.)
+
+### Configuration
+
+Create a `.env` file in the project root:
+
+```bash
+# Base chain RPC endpoint
+BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+
+# Neo4j credentials (optional - defaults shown)
+NEO4J_URI=neo4j://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=your-secure-password
+```
 
 ### Local Development Setup
 
 1. Clone the repository
 
-2. Start the Neo4j database:
+2. Create your `.env` file with your Base RPC URL
+
+3. Start the Neo4j database:
 ```bash
-docker compose up -d
+docker compose up -d neo4j
 ```
 
-3. Build and run the main application:
+4. Wait for Neo4j to be healthy (about 60 seconds), then run:
 ```bash
 make graph
+```
+
+Or run directly:
+```bash
+go run cmd/dexgraph/main.go
 ```
 
 ### Neo4j Database Access
 
 - **Web Interface**: http://localhost:7474
 - **Bolt URI**: neo4j://localhost:7687
-- **Default Credentials**: 
+- **Default Credentials**:
   - Username: neo4j
-  - Password: your-secure-password (set in docker-compose.yaml)
+  - Password: your-secure-password
 
-### Configuration
+## How It Works
 
-Key configuration parameters:
+### Pool Fetching
 
-```go
-// Database configuration in cmd/dexgraph/main.go
-config := db.Neo4jConfig{
-    URI:      "neo4j://localhost:7687",
-    Username: "neo4j",
-    Password: "your-secure-password",
-}
+1. Connects to Base chain via RPC
+2. Queries Aerodrome V2 Factory for all pools
+3. For each pool:
+   - Checks if it's a volatile pool (skips stable pools)
+   - Fetches token0 and token1 addresses
+   - Gets reserves via `getReserves()`
+   - Retrieves token decimals and symbols
+   - Calculates exchange rates (accounting for 0.3% fee)
+
+### Arbitrage Detection
+
+1. Stores pools as edges in Neo4j graph
+2. Uses negative log of exchange rates as edge weights
+3. Runs Bellman-Ford algorithm via Neo4j GDS
+4. Detects negative cycles (arbitrage opportunities)
+5. Filters for cycles starting with major tokens (WETH, USDC, USDbC)
+
+### Key Token Addresses (Base)
+
+| Token | Address |
+|-------|---------|
+| WETH | `0x4200000000000000000000000000000000000006` |
+| USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| USDbC | `0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA` |
+
+## Docker Deployment
+
+Run the full stack:
+
+```bash
+docker compose up -d
 ```
+
+This starts:
+- Neo4j database with GDS and APOC plugins
+- Watcher application (after Neo4j is healthy)
 
 ## Contributing
 
@@ -107,67 +158,49 @@ type PoolFetcher interface {
 - Use `gofmt` for formatting
 - Include error handling
 - Use context for cancellation
-- Write concurrent code where appropriate
 
-## Running Tests
+## Monitoring
 
-TODO: Impliment tests so we can run:
+### Neo4j Queries
 
-```bash
-go test ./...
-```
-
-## Monitoring and Maintenance
-
-### Neo4j Database
-
-- View the database config:
+View all assets:
 ```cypher
-CALL dbms.listConfig
+MATCH (a:Asset) RETURN a LIMIT 100;
 ```
 
-- Check indexes:
+View swap relationships:
+```cypher
+MATCH (a:Asset)-[r:PROVIDES_SWAP]->(b:Asset)
+RETURN a.name, r.exchangeRate, b.name
+LIMIT 100;
+```
+
+Check indexes:
 ```cypher
 SHOW INDEXES;
 ```
 
-### Application Metrics
-
-TODO: Add Prometheus metrics for:
-- Pool fetch latency
-- Success/failure rates
-- Database operation latency
-
 ## Troubleshooting
 
-Common issues and solutions:
+1. **RPC Connection Issues**
+   - Verify BASE_RPC_URL is set correctly
+   - Check RPC endpoint rate limits
+   - Ensure your API key is valid
 
-1. **Database Connection Issues**
+2. **Database Connection Issues**
    - Ensure Neo4j is running: `docker compose ps`
    - Check logs: `docker compose logs neo4j`
-   - Verify credentials in main.go match docker-compose.yml
+   - Verify NEO4J_PASSWORD matches docker-compose.yaml
 
-2. **DEX API Issues**
-   - Check rate limits
-   - Verify API endpoints
-   - Review error logs
-
+3. **No Pools Found**
+   - Check RPC connectivity
+   - Verify Aerodrome Factory address is correct
+   - Review application logs for errors
 
 ## References
 
 - [Neo4j Documentation](https://neo4j.com/docs/)
-- [Go Documentation](https://golang.org/doc/)
-- [Tinyman API Documentation](https://docs.tinyman.org/)
-
-## Misc.
-
-Example of arb that gets identified with `negLogRate < 0` and not `exp(-negLogRate) > 1` 
-
-```txt
-< Found arbitrage opportunity along the following route with profit factor: 1
-<  ZONE->Elephant Nips->ZONE
-< Detailed information about each Node on the route:
-< [{95 4:50561179-b898-4249-8075-5768feb9d457:95 [Asset] map[id:444035862 name:ZONE]} {236 4:50561179-b898-4249-8075-5768feb9d457:236 [Asset] map[id:640873368 name:Elephant Nips]} {95 4:50561179-b898-4249-8075-5768feb9d457:95 [Asset] map[id:444035862 name:ZONE]}]
-< negLogRate for each liquidity pool necessary for facilitating arb:
-< [0 -0.49344432415171424 -1.1102230246251565e-16]
-```
+- [Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/current/)
+- [Aerodrome Finance](https://aerodrome.finance/)
+- [Base Chain](https://base.org/)
+- [go-ethereum](https://github.com/ethereum/go-ethereum)
