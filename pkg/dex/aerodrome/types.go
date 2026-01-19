@@ -1,20 +1,8 @@
 package aerodrome
 
 import (
-	"math/big"
-
 	"github.com/ethereum/go-ethereum/common"
 )
-
-// PoolInfo holds raw pool data from contract calls
-type PoolInfo struct {
-	Address  common.Address
-	Token0   common.Address
-	Token1   common.Address
-	Reserve0 *big.Int
-	Reserve1 *big.Int
-	Stable   bool
-}
 
 // TokenInfo holds token metadata
 type TokenInfo struct {

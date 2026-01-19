@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 	"watcher/pkg/chain/base"
 	"watcher/pkg/config"
@@ -24,7 +27,18 @@ var (
 )
 
 func main() {
-	ctx := context.Background()
+	// Setup context with cancellation for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle interrupt signals for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		log.Printf("Received signal %v, shutting down...", sig)
+		cancel()
+	}()
 
 	log.Println("Loading configuration...")
 	cfg, err := config.Load()

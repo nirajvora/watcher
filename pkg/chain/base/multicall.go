@@ -98,7 +98,7 @@ func (c *Client) BatchCallContract(ctx context.Context, calls []ContractCall) ([
 
 	// Execute the multicall with retry logic
 	var result []byte
-	err = c.retryCall(func() error {
+	err = c.retryCallWithContext(ctx, func() error {
 		var callErr error
 		msg := ethereum.CallMsg{
 			To:   &Multicall3Address,
@@ -135,10 +135,17 @@ func (c *Client) BatchCallContract(ctx context.Context, calls []ContractCall) ([
 	return callResults, nil
 }
 
-// retryCall executes a function with exponential backoff retry
-func (c *Client) retryCall(fn func() error, maxRetries int) error {
+// retryCallWithContext executes a function with exponential backoff retry, respecting context cancellation
+func (c *Client) retryCallWithContext(ctx context.Context, fn func() error, maxRetries int) error {
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Check if context is cancelled before attempting
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		err := fn()
 		if err == nil {
 			return nil
@@ -151,9 +158,16 @@ func (c *Client) retryCall(fn func() error, maxRetries int) error {
 			return err
 		}
 
-		// Exponential backoff: 100ms, 200ms, 400ms
-		backoff := time.Duration(100<<attempt) * time.Millisecond
-		time.Sleep(backoff)
+		// Don't sleep after the last attempt
+		if attempt < maxRetries-1 {
+			// Exponential backoff: 100ms, 200ms, 400ms
+			backoff := time.Duration(100<<attempt) * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
 	}
 	return lastErr
 }

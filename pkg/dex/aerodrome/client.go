@@ -22,9 +22,6 @@ const (
 	// Multicall batch size (max calls per multicall request)
 	multicallBatchSize = 100
 
-	// Maximum concurrent workers for processing results
-	maxWorkers = 20
-
 	// Minimum reserve threshold in wei (1e15 = 0.001 ETH or ~$1-10 worth)
 	// Pools with BOTH reserves below this are skipped
 	minReserveThreshold = 1e15

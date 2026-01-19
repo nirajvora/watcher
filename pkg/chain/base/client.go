@@ -13,7 +13,6 @@ import (
 
 type Client struct {
 	ethClient   *ethclient.Client
-	rpcURL      string
 	rateLimiter *time.Ticker
 }
 
@@ -25,7 +24,6 @@ func NewClient(rpcURL string) (*Client, error) {
 
 	return &Client{
 		ethClient:   client,
-		rpcURL:      rpcURL,
 		rateLimiter: time.NewTicker(100 * time.Millisecond), // 10 requests per second
 	}, nil
 }
