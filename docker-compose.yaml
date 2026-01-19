@@ -37,8 +37,9 @@ services:
         condition: service_healthy
     environment:
       NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
+      NEO4J_USERNAME: neo4j
       NEO4J_PASSWORD: your-secure-password
+      BASE_RPC_URL: ${BASE_RPC_URL}
 
 volumes:
   neo4j_data:
