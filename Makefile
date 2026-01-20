@@ -1,34 +1,49 @@
-.PHONY: all fmt graph build run logs stop clean
+.PHONY: build run test bench lint clean infra infra-down fmt
 
-# Default target
-all: graph
+# Build the watcher binary
+build:
+	@mkdir -p bin
+	go build -o bin/watcher ./cmd/watcher
+
+# Run the watcher application
+run: build
+	@mkdir -p data
+	./bin/watcher
+
+# Run tests
+test:
+	go test -v -race ./...
+
+# Run benchmarks
+bench:
+	go test -bench=. -benchmem ./internal/detector/
+
+# Run linter
+lint:
+	golangci-lint run
 
 # Format Go code
 fmt:
 	gofmt -s -w .
 
-# Run graph application locally (without Docker)
-graph:
-	go run cmd/dexgraph/main.go
+# Clean build artifacts and data
+clean:
+	rm -rf bin/ data/
 
-# Build the Docker image
-build:
-	docker compose build app
+# Start infrastructure (Neo4j for future analytical use)
+infra:
+	docker compose up -d neo4j
 
-# Rebuild and run the application in Docker
-run: build
-	docker compose up -d
-	docker compose logs app -f
-
-# Show logs from the app container
-logs:
-	docker compose logs app -f
-
-# Stop all containers
-stop:
+# Stop infrastructure
+infra-down:
 	docker compose down
 
-# Clean up: stop containers, remove volumes, and prune images
-clean:
-	docker compose down -v
-	docker image prune -f
+# Run with debug logging
+debug: build
+	@mkdir -p data
+	LOG_LEVEL=debug ./bin/watcher
+
+# Run with reduced pool count for faster testing
+test-run: build
+	@mkdir -p data
+	CURATOR_TOP_POOLS_COUNT=100 ./bin/watcher
