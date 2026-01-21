@@ -21,6 +21,7 @@ type Evaluator struct {
 	minTVL         float64
 	interval       time.Duration
 	factoryAddress string
+	startTokens    []string
 }
 
 // NewEvaluator creates a new pool evaluator.
@@ -32,6 +33,7 @@ func NewEvaluator(
 	topPoolsCount int,
 	minTVL float64,
 	interval time.Duration,
+	startTokens []string,
 ) *Evaluator {
 	return &Evaluator{
 		client:         client,
@@ -41,6 +43,7 @@ func NewEvaluator(
 		minTVL:         minTVL,
 		interval:       interval,
 		factoryAddress: factoryAddress,
+		startTokens:    startTokens,
 	}
 }
 
@@ -72,7 +75,7 @@ func (e *Evaluator) evaluate(ctx context.Context) error {
 	log.Info().Msg("Starting pool re-evaluation")
 
 	// Fetch fresh pool data
-	bootstrap := NewBootstrap(e.client, e.factoryAddress, 100)
+	bootstrap := NewBootstrap(e.client, e.factoryAddress, 100, e.startTokens)
 	pools, tokens, err := bootstrap.FetchTopPools(ctx, e.topPoolsCount)
 	if err != nil {
 		return err
@@ -112,8 +115,8 @@ func (e *Evaluator) evaluate(ctx context.Context) error {
 
 // EvaluateNewPool evaluates a newly created pool.
 func (e *Evaluator) EvaluateNewPool(ctx context.Context, poolAddr, token0, token1 string) (bool, error) {
-	// Fetch pool details
-	bootstrap := NewBootstrap(e.client, e.factoryAddress, 100)
+	// Fetch pool details (no start token filtering needed for single pool fetch)
+	bootstrap := NewBootstrap(e.client, e.factoryAddress, 100, nil)
 
 	poolInfos, err := bootstrap.fetchPoolDetails(ctx, []string{poolAddr})
 	if err != nil || len(poolInfos) == 0 {

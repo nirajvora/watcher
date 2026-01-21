@@ -14,7 +14,7 @@ curator:
 
 detector:
   min_profit_factor: 1.001
-  max_path_length: 4
+  max_path_length: 6  # Increased from 4 after adding pool reuse prevention
   num_workers: 4
 
   # Starting tokens for arbitrage (must end back at same token)

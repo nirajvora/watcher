@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,7 +29,7 @@ type Service struct {
 	graphManager *graph.Manager
 	metrics      *metrics.Metrics
 
-	// Tracked pool addresses
+	// Tracked pool addresses (all lowercase)
 	mu             sync.RWMutex
 	trackedPools   map[string]struct{}
 	factoryAddress string
@@ -54,7 +55,7 @@ func NewService(
 		graphManager:      graphManager,
 		metrics:           m,
 		trackedPools:      make(map[string]struct{}),
-		factoryAddress:    factoryAddress,
+		factoryAddress:    strings.ToLower(factoryAddress),
 		syncEvents:        make(chan *SyncEvent, 1000),
 		poolCreatedEvents: make(chan *PoolCreatedEvent, 100),
 	}
@@ -77,7 +78,7 @@ func (s *Service) SetTrackedPools(addresses []string) {
 
 	s.trackedPools = make(map[string]struct{}, len(addresses))
 	for _, addr := range addresses {
-		s.trackedPools[addr] = struct{}{}
+		s.trackedPools[strings.ToLower(addr)] = struct{}{}
 	}
 
 	log.Info().Int("count", len(addresses)).Msg("Updated tracked pools")
@@ -88,7 +89,7 @@ func (s *Service) AddTrackedPool(address string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.trackedPools[address] = struct{}{}
+	s.trackedPools[strings.ToLower(address)] = struct{}{}
 }
 
 // IsTracked returns true if the pool is being tracked.
@@ -96,7 +97,7 @@ func (s *Service) IsTracked(address string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	_, exists := s.trackedPools[address]
+	_, exists := s.trackedPools[strings.ToLower(address)]
 	return exists
 }
 
@@ -222,6 +223,8 @@ func (s *Service) Resubscribe(ctx context.Context) error {
 
 // processMessage processes a raw WebSocket message.
 func (s *Service) processMessage(raw json.RawMessage) {
+	log.Debug().RawJSON("message", raw).Msg("Received WebSocket message")
+
 	// Parse subscription notification
 	var notification struct {
 		Subscription string   `json:"subscription"`
@@ -243,26 +246,52 @@ func (s *Service) processMessage(raw json.RawMessage) {
 		return
 	}
 
-	// Decode based on event type
+	// Log what type of event we received
 	if IsSyncEvent(logEntry) {
+		log.Info().
+			Str("address", logEntry.Address).
+			Str("block", logEntry.BlockNumber).
+			Msg("Received Sync event from WebSocket")
 		s.processSyncEvent(logEntry)
 	} else if IsPoolCreatedEvent(logEntry) {
+		log.Info().
+			Str("address", logEntry.Address).
+			Str("block", logEntry.BlockNumber).
+			Msg("Received PoolCreated event from WebSocket")
 		s.processPoolCreatedEvent(logEntry)
+	} else {
+		log.Debug().
+			Str("address", logEntry.Address).
+			Int("topics", len(logEntry.Topics)).
+			Msg("Received unknown event type")
 	}
 }
 
 // processSyncEvent decodes and processes a Sync event.
 func (s *Service) processSyncEvent(logEntry *LogEntry) {
+	// Normalize address for comparison
+	normalizedAddr := strings.ToLower(logEntry.Address)
+
 	// Check if we're tracking this pool
-	if !s.IsTracked(logEntry.Address) {
+	if !s.IsTracked(normalizedAddr) {
+		log.Debug().
+			Str("pool", normalizedAddr).
+			Msg("Sync event for untracked pool, skipping")
 		return
 	}
 
 	event, err := s.decoder.DecodeSyncEvent(logEntry)
 	if err != nil {
-		log.Warn().Err(err).Str("pool", logEntry.Address).Msg("Failed to decode Sync event")
+		log.Warn().Err(err).Str("pool", normalizedAddr).Msg("Failed to decode Sync event")
 		return
 	}
+
+	log.Info().
+		Str("pool", event.PoolAddress).
+		Uint64("block", event.BlockNumber).
+		Str("reserve0", event.Reserve0.String()).
+		Str("reserve1", event.Reserve1.String()).
+		Msg("Decoded Sync event, sending to graph manager")
 
 	// Update metrics
 	if s.metrics != nil {
@@ -292,13 +321,6 @@ func (s *Service) processSyncEvent(logEntry *LogEntry) {
 	default:
 		// Channel full, skip
 	}
-
-	log.Trace().
-		Str("pool", event.PoolAddress).
-		Uint64("block", event.BlockNumber).
-		Str("reserve0", event.Reserve0.String()).
-		Str("reserve1", event.Reserve1.String()).
-		Msg("Processed Sync event")
 }
 
 // processPoolCreatedEvent decodes and processes a PoolCreated event.

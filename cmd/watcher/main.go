@@ -116,6 +116,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 			MinTVLUSD:            cfg.Curator.MinTVLUSD,
 			ReevaluationInterval: cfg.Curator.ReevaluationInterval,
 			BootstrapBatchSize:   cfg.Curator.BootstrapBatchSize,
+			StartTokens:          cfg.Detector.StartTokens, // Ensure pools with start tokens are always included
 		},
 		rpcClient,
 		store,
@@ -151,6 +152,11 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Int("edges", edges).
 		Int("pools", pools).
 		Msg("Graph initialized")
+
+	// Validate graph consistency
+	if !graphManager.Graph().ValidateAndLog() {
+		log.Warn().Msg("Graph validation failed - continuing but some cycles may be missed")
+	}
 
 	// Create initial snapshot and run detection once
 	log.Info().Msg("Running initial detection...")

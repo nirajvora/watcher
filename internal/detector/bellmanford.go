@@ -147,6 +147,7 @@ func BellmanFordFromSource(snap *graph.Snapshot, sourceIdx int, maxPathLen int) 
 }
 
 // extractCycleFromPred extracts a cycle from predecessor arrays starting from a known cycle node.
+// Tracks pool usage to ensure no pool is reused in the cycle.
 func extractCycleFromPred(cycleNode int, pred []int, predEdge []graph.Edge, n int) []graph.Edge {
 	// Find a node definitely in the cycle by walking back n times
 	nodeInCycle := cycleNode
@@ -158,7 +159,9 @@ func extractCycleFromPred(cycleNode int, pred []int, predEdge []graph.Edge, n in
 	}
 
 	// Now walk until we return to this node to extract the cycle
+	// Track used pools to avoid reuse
 	visited := make(map[int]bool)
+	usedPools := make(map[string]bool)
 	var cycle []graph.Edge
 	current := nodeInCycle
 
@@ -172,7 +175,15 @@ func extractCycleFromPred(cycleNode int, pred []int, predEdge []graph.Edge, n in
 			return nil
 		}
 
-		cycle = append(cycle, predEdge[current])
+		edge := predEdge[current]
+
+		// Check for pool reuse
+		if usedPools[edge.PoolAddr] {
+			return nil // Pool reused - invalid cycle
+		}
+		usedPools[edge.PoolAddr] = true
+
+		cycle = append(cycle, edge)
 		current = pred[current]
 
 		if current == nodeInCycle {
@@ -243,6 +254,10 @@ func FindNegativeCycleContaining(snap *graph.Snapshot, sourceIdx int, maxPathLen
 
 	// Check for negative cycle involving source
 	// Look at all edges coming back to source
+	// Store all valid cycles and return the most profitable one
+	var bestCycle []graph.Edge
+	var bestWeight float64
+
 	for u := 0; u < n; u++ {
 		if dist[u] >= infinity/2 {
 			continue
@@ -252,20 +267,33 @@ func FindNegativeCycleContaining(snap *graph.Snapshot, sourceIdx int, maxPathLen
 			if edge.To == sourceIdx {
 				totalWeight := dist[u] + edge.Weight
 				if totalWeight < 0 {
-					// Found negative cycle back to source
-					// Reconstruct path
+					// Found potential negative cycle back to source
+					// Reconstruct path while tracking used pools
+					usedPools := make(map[string]bool)
+					usedPools[edge.PoolAddr] = true
+
 					path := []graph.Edge{edge}
 					current := u
 					visited := make(map[int]bool)
+					valid := true
 
 					for current != sourceIdx && !visited[current] && pred[current] >= 0 {
 						visited[current] = true
-						path = append(path, predEdge[current])
+						predE := predEdge[current]
+
+						// Check for pool reuse
+						if usedPools[predE.PoolAddr] {
+							valid = false
+							break
+						}
+						usedPools[predE.PoolAddr] = true
+
+						path = append(path, predE)
 						current = pred[current]
 					}
 
-					if current != sourceIdx {
-						continue // Path doesn't lead back properly
+					if !valid || current != sourceIdx {
+						continue // Invalid path
 					}
 
 					// Reverse path
@@ -274,11 +302,15 @@ func FindNegativeCycleContaining(snap *graph.Snapshot, sourceIdx int, maxPathLen
 						reversed[len(path)-1-i] = e
 					}
 
-					return reversed
+					// Keep the best (most negative weight = most profitable)
+					if bestCycle == nil || totalWeight < bestWeight {
+						bestCycle = reversed
+						bestWeight = totalWeight
+					}
 				}
 			}
 		}
 	}
 
-	return nil
+	return bestCycle
 }

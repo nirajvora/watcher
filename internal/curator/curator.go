@@ -20,6 +20,7 @@ type Config struct {
 	MinTVLUSD            float64
 	ReevaluationInterval time.Duration
 	BootstrapBatchSize   int
+	StartTokens          []string // Start tokens for arbitrage - must always be included
 }
 
 // Curator manages the pool lifecycle including bootstrap, tracking, and evaluation.
@@ -51,7 +52,7 @@ func NewCurator(
 		graphManager: graphManager,
 		metrics:      m,
 		ingestion:    ingestionSvc,
-		bootstrap:    NewBootstrap(client, cfg.FactoryAddress, cfg.BootstrapBatchSize),
+		bootstrap:    NewBootstrap(client, cfg.FactoryAddress, cfg.BootstrapBatchSize, cfg.StartTokens),
 		evaluator: NewEvaluator(
 			client,
 			store,
@@ -60,6 +61,7 @@ func NewCurator(
 			cfg.TopPoolsCount,
 			cfg.MinTVLUSD,
 			cfg.ReevaluationInterval,
+			cfg.StartTokens,
 		),
 	}
 }

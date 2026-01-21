@@ -47,6 +47,7 @@ type Bootstrap struct {
 	client         *base.Client
 	factoryAddress common.Address
 	batchSize      int
+	startTokens    map[string]struct{} // Lowercase start tokens for quick lookup
 
 	// Token cache
 	tokenCache   map[string]*TokenInfo
@@ -54,11 +55,18 @@ type Bootstrap struct {
 }
 
 // NewBootstrap creates a new bootstrap instance.
-func NewBootstrap(client *base.Client, factoryAddress string, batchSize int) *Bootstrap {
+func NewBootstrap(client *base.Client, factoryAddress string, batchSize int, startTokens []string) *Bootstrap {
+	// Build start token set with lowercase addresses
+	startTokenSet := make(map[string]struct{}, len(startTokens))
+	for _, token := range startTokens {
+		startTokenSet[strings.ToLower(token)] = struct{}{}
+	}
+
 	return &Bootstrap{
 		client:         client,
 		factoryAddress: common.HexToAddress(factoryAddress),
 		batchSize:      batchSize,
+		startTokens:    startTokenSet,
 		tokenCache:     make(map[string]*TokenInfo),
 	}
 }
@@ -95,12 +103,15 @@ func (b *Bootstrap) FetchTopPools(ctx context.Context, topN int) ([]PoolInfo, ma
 	}
 	log.Info().Int("tokens", len(tokens)).Dur("elapsed", time.Since(startTime)).Msg("Fetched token info")
 
-	// Sort by TVL and take top N
-	sortedPools := sortPoolsByReserves(pools, tokens, topN)
+	// Sort by TVL and take top N, ensuring start token pools are included
+	sortedPools := b.selectPoolsWithStartTokens(pools, tokens, topN)
 	log.Info().
 		Int("selected", len(sortedPools)).
 		Dur("total_time", time.Since(startTime)).
 		Msg("Bootstrap complete")
+
+	// Validate start token presence
+	b.validateStartTokenPools(sortedPools, tokens)
 
 	return sortedPools, tokens, nil
 }
@@ -439,8 +450,112 @@ func (b *Bootstrap) fetchTokenBatch(ctx context.Context, addresses []string) err
 	return nil
 }
 
-// sortPoolsByReserves sorts pools by combined reserves and returns top N.
-func sortPoolsByReserves(pools []PoolInfo, tokens map[string]*TokenInfo, topN int) []PoolInfo {
+// selectPoolsWithStartTokens selects top N pools by TVL, ensuring all pools
+// containing start tokens are included regardless of TVL ranking.
+func (b *Bootstrap) selectPoolsWithStartTokens(pools []PoolInfo, tokens map[string]*TokenInfo, topN int) []PoolInfo {
+	// Separate pools containing start tokens from others
+	var startTokenPools []PoolInfo
+	var otherPools []PoolInfo
+
+	for _, pool := range pools {
+		token0Lower := strings.ToLower(pool.Token0)
+		token1Lower := strings.ToLower(pool.Token1)
+
+		_, hasToken0 := b.startTokens[token0Lower]
+		_, hasToken1 := b.startTokens[token1Lower]
+
+		if hasToken0 || hasToken1 {
+			startTokenPools = append(startTokenPools, pool)
+		} else {
+			otherPools = append(otherPools, pool)
+		}
+	}
+
+	log.Info().
+		Int("start_token_pools", len(startTokenPools)).
+		Int("other_pools", len(otherPools)).
+		Int("start_tokens_configured", len(b.startTokens)).
+		Msg("Pool selection: separated start token pools")
+
+	// Sort start token pools by TVL
+	startTokenPools = sortPoolsByTVL(startTokenPools, tokens)
+
+	// Sort other pools by TVL
+	otherPools = sortPoolsByTVL(otherPools, tokens)
+
+	// Build result: all start token pools first, then fill remaining with other pools
+	result := make([]PoolInfo, 0, topN)
+
+	// Add all start token pools (these are mandatory)
+	result = append(result, startTokenPools...)
+
+	// Fill remaining slots with other pools
+	remaining := topN - len(result)
+	if remaining > 0 && len(otherPools) > 0 {
+		if remaining > len(otherPools) {
+			remaining = len(otherPools)
+		}
+		result = append(result, otherPools[:remaining]...)
+	}
+
+	log.Info().
+		Int("start_token_pools_included", len(startTokenPools)).
+		Int("other_pools_included", len(result)-len(startTokenPools)).
+		Int("total_selected", len(result)).
+		Int("target", topN).
+		Msg("Pool selection complete")
+
+	return result
+}
+
+// validateStartTokenPools logs which start tokens have pools and warns if any are missing.
+func (b *Bootstrap) validateStartTokenPools(pools []PoolInfo, tokens map[string]*TokenInfo) {
+	// Count pools per start token
+	poolsPerToken := make(map[string]int)
+	for token := range b.startTokens {
+		poolsPerToken[token] = 0
+	}
+
+	for _, pool := range pools {
+		token0Lower := strings.ToLower(pool.Token0)
+		token1Lower := strings.ToLower(pool.Token1)
+
+		if _, isStart := b.startTokens[token0Lower]; isStart {
+			poolsPerToken[token0Lower]++
+		}
+		if _, isStart := b.startTokens[token1Lower]; isStart {
+			poolsPerToken[token1Lower]++
+		}
+	}
+
+	// Log results and warn on missing
+	for token, count := range poolsPerToken {
+		symbol := "UNKNOWN"
+		if info, ok := tokens[token]; ok {
+			symbol = info.Symbol
+		}
+
+		if count == 0 {
+			log.Warn().
+				Str("token", token).
+				Str("symbol", symbol).
+				Msg("START TOKEN HAS ZERO POOLS - arbitrage detection will not work for this token!")
+		} else {
+			log.Info().
+				Str("token", token).
+				Str("symbol", symbol).
+				Int("pool_count", count).
+				Msg("Start token pool count validated")
+		}
+	}
+}
+
+// sortPoolsByTVL sorts pools by approximate TVL descending.
+func sortPoolsByTVL(pools []PoolInfo, tokens map[string]*TokenInfo) []PoolInfo {
+	if len(pools) == 0 {
+		return pools
+	}
+
 	// Calculate approximate TVL for sorting
 	type poolWithTVL struct {
 		pool PoolInfo
@@ -475,14 +590,10 @@ func sortPoolsByReserves(pools []PoolInfo, tokens map[string]*TokenInfo, topN in
 		}
 	}
 
-	// Take top N
-	if topN > len(poolsWithTVL) {
-		topN = len(poolsWithTVL)
-	}
-
-	result := make([]PoolInfo, topN)
-	for i := 0; i < topN; i++ {
-		result[i] = poolsWithTVL[i].pool
+	// Extract sorted pools
+	result := make([]PoolInfo, len(poolsWithTVL))
+	for i, p := range poolsWithTVL {
+		result[i] = p.pool
 	}
 
 	return result

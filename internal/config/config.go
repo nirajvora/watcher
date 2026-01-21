@@ -114,7 +114,7 @@ func (c *Config) setDefaults() {
 	}
 	c.Detector = DetectorConfig{
 		MinProfitFactor: 1.001,
-		MaxPathLength:   4,
+		MaxPathLength:   6, // Increased from 4 after adding pool reuse prevention
 		NumWorkers:      4,
 		StartTokens: []string{
 			"0x4200000000000000000000000000000000000006", // WETH

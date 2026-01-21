@@ -208,7 +208,9 @@ func (s *CycleSet) Count() int {
 	return len(s.cycles)
 }
 
-// ValidateCycle checks if a cycle is valid (forms a complete loop).
+// ValidateCycle checks if a cycle is valid:
+// 1. Forms a complete loop (edges connect properly)
+// 2. Does not reuse any pool (each pool used at most once)
 func ValidateCycle(edges []graph.Edge) bool {
 	if len(edges) < 2 {
 		return false
@@ -224,6 +226,15 @@ func ValidateCycle(edges []graph.Edge) bool {
 	// Check last edge connects back to first
 	if edges[len(edges)-1].To != edges[0].From {
 		return false
+	}
+
+	// Check for duplicate pools - a valid arbitrage cannot reuse a pool
+	usedPools := make(map[string]bool)
+	for _, e := range edges {
+		if usedPools[e.PoolAddr] {
+			return false // Pool reused - invalid cycle
+		}
+		usedPools[e.PoolAddr] = true
 	}
 
 	return true

@@ -320,3 +320,158 @@ func TestSwapCalculation(t *testing.T) {
 		t.Errorf("Swap output mismatch: got %s, expected ~%s", output, expected)
 	}
 }
+
+// TestPoolReuseRejection verifies that cycles reusing the same pool are rejected.
+func TestPoolReuseRejection(t *testing.T) {
+	// Test cycle that reuses the same pool - should be invalid
+	edgesWithReuse := []graph.Edge{
+		{From: 0, To: 1, PoolAddr: "pool1"},
+		{From: 1, To: 2, PoolAddr: "pool2"},
+		{From: 2, To: 3, PoolAddr: "pool1"}, // Reuses pool1!
+		{From: 3, To: 0, PoolAddr: "pool3"},
+	}
+
+	if ValidateCycle(edgesWithReuse) {
+		t.Error("Expected cycle with pool reuse to be invalid")
+	}
+
+	// Test cycle with all unique pools - should be valid
+	edgesUnique := []graph.Edge{
+		{From: 0, To: 1, PoolAddr: "pool1"},
+		{From: 1, To: 2, PoolAddr: "pool2"},
+		{From: 2, To: 3, PoolAddr: "pool3"},
+		{From: 3, To: 0, PoolAddr: "pool4"},
+	}
+
+	if !ValidateCycle(edgesUnique) {
+		t.Error("Expected cycle with unique pools to be valid")
+	}
+}
+
+// TestCycleProfit tests profit factor calculation.
+func TestCycleProfit(t *testing.T) {
+	// Create a cycle with negative total weight (profitable)
+	profitableEdges := []graph.Edge{
+		{From: 0, To: 1, PoolAddr: "pool1", Weight: -0.01},
+		{From: 1, To: 2, PoolAddr: "pool2", Weight: -0.005},
+		{From: 2, To: 0, PoolAddr: "pool3", Weight: -0.005},
+	}
+
+	cycle := NewCycle(profitableEdges)
+	if cycle == nil {
+		t.Fatal("Failed to create cycle")
+	}
+
+	// Total weight = -0.02, so profit factor = exp(0.02) ≈ 1.0202
+	if cycle.TotalWeight >= 0 {
+		t.Errorf("Expected negative total weight, got %f", cycle.TotalWeight)
+	}
+
+	if cycle.ProfitFactor <= 1.0 {
+		t.Errorf("Expected profit factor > 1, got %f", cycle.ProfitFactor)
+	}
+
+	// Create a non-profitable cycle (positive total weight)
+	unprofitableEdges := []graph.Edge{
+		{From: 0, To: 1, PoolAddr: "pool1", Weight: 0.01},
+		{From: 1, To: 2, PoolAddr: "pool2", Weight: 0.005},
+		{From: 2, To: 0, PoolAddr: "pool3", Weight: 0.005},
+	}
+
+	unprofitableCycle := NewCycle(unprofitableEdges)
+	if unprofitableCycle.ProfitFactor >= 1.0 {
+		t.Errorf("Expected profit factor < 1 for unprofitable cycle, got %f", unprofitableCycle.ProfitFactor)
+	}
+}
+
+// TestWeightCalculation tests edge weight calculation.
+func TestWeightCalculation(t *testing.T) {
+	tests := []struct {
+		name        string
+		reserve0    *big.Int
+		reserve1    *big.Int
+		fee         float64
+		expectNeg   bool // true if we expect weight to favor this trade
+	}{
+		{
+			name:      "equal reserves",
+			reserve0:  bigInt("1000000000000000000"),
+			reserve1:  bigInt("1000000000000000000"),
+			fee:       0.003,
+			expectNeg: false, // Equal reserves = rate 1.0, minus fee = loss
+		},
+		{
+			name:      "favorable rate (more output)",
+			reserve0:  bigInt("1000000000000000000"),
+			reserve1:  bigInt("2000000000000000000"),
+			fee:       0.003,
+			expectNeg: true, // Getting 2x output minus fee is still profitable
+		},
+		{
+			name:      "unfavorable rate (less output)",
+			reserve0:  bigInt("2000000000000000000"),
+			reserve1:  bigInt("1000000000000000000"),
+			fee:       0.003,
+			expectNeg: false, // Getting 0.5x output is a loss
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			weight := graph.CalculateWeight(tt.reserve0, tt.reserve1, tt.fee)
+
+			if tt.expectNeg && weight >= 0 {
+				t.Errorf("Expected negative weight, got %f", weight)
+			}
+			if !tt.expectNeg && weight < 0 {
+				t.Errorf("Expected non-negative weight, got %f", weight)
+			}
+		})
+	}
+}
+
+// TestCycleSetDeduplication tests that duplicate cycles are properly deduplicated.
+func TestCycleSetDeduplication(t *testing.T) {
+	set := NewCycleSet()
+
+	// Add a cycle
+	cycle1 := NewCycle([]graph.Edge{
+		{From: 0, To: 1, PoolAddr: "pool1", Weight: -0.01},
+		{From: 1, To: 2, PoolAddr: "pool2", Weight: -0.01},
+		{From: 2, To: 0, PoolAddr: "pool3", Weight: -0.01},
+	})
+	added1 := set.Add(cycle1)
+	if !added1 {
+		t.Error("Expected first cycle to be added")
+	}
+
+	// Add the same cycle rotated (should be deduplicated)
+	cycle2 := NewCycle([]graph.Edge{
+		{From: 1, To: 2, PoolAddr: "pool2", Weight: -0.01},
+		{From: 2, To: 0, PoolAddr: "pool3", Weight: -0.01},
+		{From: 0, To: 1, PoolAddr: "pool1", Weight: -0.01},
+	})
+	added2 := set.Add(cycle2)
+	if added2 {
+		t.Error("Expected rotated cycle to be deduplicated")
+	}
+
+	if set.Count() != 1 {
+		t.Errorf("Expected 1 cycle in set, got %d", set.Count())
+	}
+
+	// Add a different cycle (should be added)
+	cycle3 := NewCycle([]graph.Edge{
+		{From: 0, To: 3, PoolAddr: "pool4", Weight: -0.01},
+		{From: 3, To: 4, PoolAddr: "pool5", Weight: -0.01},
+		{From: 4, To: 0, PoolAddr: "pool6", Weight: -0.01},
+	})
+	added3 := set.Add(cycle3)
+	if !added3 {
+		t.Error("Expected different cycle to be added")
+	}
+
+	if set.Count() != 2 {
+		t.Errorf("Expected 2 cycles in set, got %d", set.Count())
+	}
+}
