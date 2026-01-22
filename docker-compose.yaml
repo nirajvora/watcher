@@ -1,4 +1,28 @@
 services:
+  # Main watcher application
+  watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: watcher-app
+    ports:
+      - "8080:8080"  # Metrics
+    environment:
+      - BASE_RPC_URL=${BASE_RPC_URL}
+      - BASE_WS_URL=${BASE_WS_URL}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CURATOR_TOP_POOLS_COUNT=${CURATOR_TOP_POOLS_COUNT:-500}
+      - SQLITE_PATH=/app/data/watcher.db
+    volumes:
+      - watcher_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
   # Neo4j is kept for future analytical use but not used in the hot path
   neo4j:
     image: neo4j:2025.09.0-community
@@ -29,6 +53,7 @@ services:
       - analytics
 
 volumes:
+  watcher_data:
   neo4j_data:
   neo4j_logs:
   neo4j_import:

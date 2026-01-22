@@ -1,4 +1,4 @@
-.PHONY: build run test bench lint clean infra infra-down fmt
+.PHONY: build run test bench lint clean infra infra-down fmt docker-build docker-run docker-stop docker-logs docker-rebuild
 
 # Build the watcher binary
 build:
@@ -47,3 +47,23 @@ debug: build
 test-run: build
 	@mkdir -p data
 	CURATOR_TOP_POOLS_COUNT=100 ./bin/watcher
+
+# Docker commands
+docker-build:
+	docker compose build watcher
+
+docker-run: docker-build
+	docker compose up -d watcher
+
+docker-stop:
+	docker compose stop watcher
+
+docker-logs:
+	docker compose logs -f watcher
+
+docker-rebuild:
+	docker compose build --no-cache watcher
+	docker compose up -d watcher
+
+# Full Docker restart (stop, rebuild, run)
+docker-restart: docker-stop docker-rebuild
