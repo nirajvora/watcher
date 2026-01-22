@@ -11,8 +11,8 @@ services:
       - BASE_RPC_URL=${BASE_RPC_URL}
       - BASE_WS_URL=${BASE_WS_URL}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - CURATOR_TOP_POOLS_COUNT=${CURATOR_TOP_POOLS_COUNT:-500}
-      - DETECTOR_MAX_PATH_LENGTH=${DETECTOR_MAX_PATH_LENGTH:-6}
+      - CURATOR_TOP_POOLS_COUNT=${CURATOR_TOP_POOLS_COUNT}
+      - DETECTOR_MAX_PATH_LENGTH=${DETECTOR_MAX_PATH_LENGTH}
       - SQLITE_PATH=/app/data/watcher.db
     volumes:
       - watcher_data:/app/data
