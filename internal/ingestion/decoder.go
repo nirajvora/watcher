@@ -13,8 +13,9 @@ import (
 
 // Event topics (keccak256 hashes of event signatures)
 var (
-	// Sync(uint112,uint112) - Emitted when reserves are updated
-	SyncEventTopic = crypto.Keccak256Hash([]byte("Sync(uint112,uint112)"))
+	// Sync(uint256,uint256) - Emitted when reserves are updated
+	// NOTE: Aerodrome V2 uses uint256 for reserves, not uint112 like Uniswap V2
+	SyncEventTopic = crypto.Keccak256Hash([]byte("Sync(uint256,uint256)"))
 
 	// PoolCreated(address,address,bool,address,uint256) - Emitted when a new pool is created
 	PoolCreatedEventTopic = crypto.Keccak256Hash([]byte("PoolCreated(address,address,bool,address,uint256)"))
@@ -64,19 +65,20 @@ type Decoder struct {
 
 // NewDecoder creates a new event decoder.
 func NewDecoder() *Decoder {
-	// Sync event: Sync(uint112 reserve0, uint112 reserve1)
+	// Sync event: Sync(uint256 reserve0, uint256 reserve1)
 	// Both values are in the data field (not indexed)
-	uint112Type, _ := abi.NewType("uint112", "", nil)
+	// NOTE: Aerodrome V2 uses uint256, not uint112 like Uniswap V2
+	uint256Type, _ := abi.NewType("uint256", "", nil)
 	syncABI := abi.Arguments{
-		{Type: uint112Type, Name: "reserve0"},
-		{Type: uint112Type, Name: "reserve1"},
+		{Type: uint256Type, Name: "reserve0"},
+		{Type: uint256Type, Name: "reserve1"},
 	}
 
 	// PoolCreated event: PoolCreated(address token0, address token1, bool stable, address pool, uint256)
 	// token0 and token1 are indexed (in topics), rest in data
 	addressType, _ := abi.NewType("address", "", nil)
 	boolType, _ := abi.NewType("bool", "", nil)
-	uint256Type, _ := abi.NewType("uint256", "", nil)
+	// Reuse uint256Type declared above for syncABI
 
 	poolCreatedABI := abi.Arguments{
 		{Type: boolType, Name: "stable"},
