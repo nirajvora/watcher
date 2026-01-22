@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "tool == \"Bash\" && tool_input.command matches \"go test\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\necho '[Hook] Running tests - checking for race conditions' >&2\necho '[Hook] Consider adding -race flag for concurrent code' >&2"
+          }
+        ],
+        "description": "Reminder about race detection when running Go tests"
+      },
+      {
+        "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\\\.go$\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\ninput=$(cat)\nfile_path=$(echo \"$input\" | jq -r '.tool_input.file_path // \"\"')\nif [ -n \"$file_path\" ]; then\n  # Check for start token handling\n  if echo \"$file_path\" | grep -qE '(graph|filter|curator)'; then\n    echo '[Hook] REMINDER: Ensure start tokens (WETH, USDC, USDbC) are always included' >&2\n  fi\n  # Check for path/cycle handling\n  if echo \"$file_path\" | grep -qE '(path|cycle|detector|bellman)'; then\n    echo '[Hook] REMINDER: Verify no pool reuse in paths' >&2\n  fi\nfi\necho \"$input\""
+          }
+        ],
+        "description": "Remind about critical constraints when editing Go files"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "tool == \"Bash\" && tool_input.command matches \"go test.*-cover\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\ninput=$(cat)\noutput=$(echo \"$input\" | jq -r '.tool_output.stdout // \"\"')\ncoverage=$(echo \"$output\" | grep -oE 'coverage: [0-9.]+%' | grep -oE '[0-9.]+')\nif [ -n \"$coverage\" ]; then\n  if (( $(echo \"$coverage < 80\" | bc -l) )); then\n    echo \"[Hook] WARNING: Coverage $coverage% is below 80% target\" >&2\n  else\n    echo \"[Hook] Coverage $coverage% meets 80% target\" >&2\n  fi\nfi\necho \"$input\""
+          }
+        ],
+        "description": "Check coverage meets 80% threshold after test runs"
+      },
+      {
+        "matcher": "tool == \"Edit\" && tool_input.file_path matches \"_test\\\\.go$\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\necho '[Hook] Test file modified - run tests to verify' >&2\necho '[Hook] Command: go test -v -race ./...' >&2"
+          }
+        ],
+        "description": "Remind to run tests after modifying test files"
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\necho '[Hook] Session ending - consider running /verify-all before stopping' >&2"
+          }
+        ],
+        "description": "Remind to verify before session ends"
+      }
+    ]
+  }
+}
