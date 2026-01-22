@@ -1,174 +1,179 @@
-# Watcher - Base Chain DEX Arbitrage Detector
+# Watcher - Real-Time DEX Arbitrage Detection System
 
-A high-performance Go application that fetches liquidity pool data from Aerodrome V2 on Base chain and stores it in a Neo4j graph database for arbitrage opportunity detection using the Bellman-Ford algorithm.
+A high-performance Go application for real-time arbitrage detection on Aerodrome V2 pools on Base Network. The system monitors Sync events via WebSocket, maintains an in-memory graph state, and uses SPFA-based Bellman-Ford algorithm to detect profitable arbitrage cycles.
 
 ## Features
 
-- **Fast Pool Fetching**: Uses Multicall3 batching to fetch ~17,000 pools in ~3.5 minutes
-- **Smart Filtering**: Automatically filters out stable pools and low-liquidity pools
-- **Graph-Based Arbitrage Detection**: Uses Neo4j GDS for efficient negative cycle detection
-- **Resilient**: Built-in retry logic with exponential backoff for transient RPC failures
+- **Real-Time Event Processing**: WebSocket subscription to Sync events for instant reserve updates
+- **In-Memory Graph**: Copy-on-write snapshots for lock-free detection during updates
+- **Fast Detection**: Sub-millisecond arbitrage detection (~0.3ms typical)
+- **Pool Reuse Prevention**: Ensures each pool is used only once per arbitrage path
+- **Simulation Verification**: AMM math simulation filters false positives from Bellman-Ford
+- **Prometheus Metrics**: Full observability with latency histograms and counters
 
 ## Architecture
 
-### Component Overview
-
 ```
-.
-├── cmd/
-│   └── dexgraph/              # Application entrypoint
-├── pkg/
-│   ├── chain/
-│   │   └── base/
-│   │       ├── client.go      # Base chain RPC client
-│   │       └── multicall.go   # Multicall3 batching for efficient RPC calls
-│   ├── config/                # Configuration and .env loading
-│   ├── db/                    # Neo4j database operations & arbitrage detection
-│   ├── dex/
-│   │   ├── interface.go       # PoolFetcher interface
-│   │   ├── service.go         # DEX service orchestrator
-│   │   └── aerodrome/         # Aerodrome V2 pool fetcher
-│   └── models/                # Pool data structures
-├── docker-compose.yaml        # Neo4j + App containers
-├── Makefile                   # Build and run commands
-└── .env                       # Environment configuration
+┌─────────────────────────────────────────────────────────────────┐
+│                    WebSocket Event Ingestion                     │
+│         Alchemy WebSocket → Sync(uint256,uint256) events         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Graph State Manager                           │
+│      In-memory graph with copy-on-write snapshots               │
+│      Tokens as nodes, pools as edges with -log(rate) weights    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Arbitrage Detector                            │
+│      SPFA-based Bellman-Ford for negative cycle detection        │
+│      Start tokens: WETH, USDC, USDbC                            │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Simulation & Validation                       │
+│      AMM constant-product math verification                      │
+│      Optimal input calculation with slippage limits              │
+└─────────────────────────────────────────────────────────────────┘
 ```
-
-### Key Components
-
-1. **Base Chain Client** (`pkg/chain/base/`)
-   - Ethereum RPC client for Base network
-   - **Multicall3 batching**: Batches up to 100 contract calls per RPC request
-   - Retry logic with exponential backoff for transient failures
-   - Handles EOF, timeout, and rate limit errors gracefully
-
-2. **Aerodrome Integration** (`pkg/dex/aerodrome/`)
-   - Fetches all V2 pools from Aerodrome Factory (`0x420DD381b31aEf6683db6B902084cB0FFECe40Da`)
-   - Batched fetching: pool addresses, reserves, token metadata
-   - **Filtering**:
-     - Skips stable pools (only volatile x*y=k pools)
-     - Skips pools with zero reserves
-     - Skips pools where both reserves < 1e15 wei (~$1-10)
-   - Calculates exchange rates with 0.3% fee adjustment
-
-3. **Database Layer** (`pkg/db/`)
-   - Neo4j graph database with GDS plugin
-   - Pools stored as bidirectional `PROVIDES_SWAP` edges between `Asset` nodes
-   - Bellman-Ford negative cycle detection for arbitrage
-   - Optimized indexes on exchange rates and asset IDs
-
-4. **Data Models** (`pkg/models/`)
-   - Pool structure with exchange rates, decimals, and fees
-   - Safe negative log calculations (handles edge cases to prevent infinity)
 
 ## Performance
 
 | Metric | Value |
 |--------|-------|
-| Total pools in factory | ~17,000 |
-| Pool fetching time | ~3.5 minutes |
-| RPC calls (with multicall) | ~700 |
-| Valid pools after filtering | ~10,000 |
-| Stable pools filtered | ~600 |
-| Low liquidity filtered | ~6,000 |
+| Bellman-Ford execution | ~12 μs |
+| Snapshot creation | ~126 μs |
+| Full detection cycle | **~0.3 ms** |
+| Target latency | <100 ms |
+| Block time (Base) | 2 seconds |
 
-## Getting Started
+The system runs **300x faster** than the target latency, leaving ample time for execution.
+
+## Quick Start
 
 ### Prerequisites
 
-- Go 1.22 or later
+- Go 1.24 or later
 - Docker and Docker Compose
-- Base chain RPC endpoint (Alchemy, QuickNode, Infura, etc.)
+- Alchemy API key (for WebSocket access to Base)
 
 ### Configuration
 
-Create a `.env` file in the project root:
+Create a `.env` file:
 
 ```bash
-# Base chain RPC endpoint (required)
+# Required: Base chain endpoints
 BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+BASE_WS_URL=wss://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
 
-# Neo4j credentials (optional - defaults shown)
-NEO4J_URI=neo4j://localhost:7687
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=your-secure-password
+# Optional configuration
+LOG_LEVEL=info                    # debug, info, warn, error
+CURATOR_TOP_POOLS_COUNT=500       # Number of pools to track
 ```
 
-### Quick Start
+### Running with Docker (Recommended)
 
 ```bash
-# Start everything and follow logs
+# Build and run
+make docker-run
+
+# View logs
+make docker-logs
+
+# Stop
+make docker-stop
+
+# Rebuild after code changes
+make docker-restart
+```
+
+### Running Locally
+
+```bash
+# Build and run
 make run
+
+# Or with debug logging
+make debug
+
+# Run with fewer pools for testing
+make test-run
 ```
 
-This builds the Docker image, starts Neo4j and the app, and follows the logs.
+## Project Structure
 
-### Makefile Commands
-
-| Command | Description |
-|---------|-------------|
-| `make run` | Build, start containers, and follow logs |
-| `make build` | Build the Docker image only |
-| `make logs` | Follow logs from the running app |
-| `make stop` | Stop all containers |
-| `make clean` | Stop containers, remove volumes, prune images |
-| `make graph` | Run locally without Docker |
-| `make fmt` | Format Go code |
-
-### Manual Setup
-
-1. Clone the repository
-
-2. Create your `.env` file with your Base RPC URL
-
-3. Start Neo4j:
-```bash
-docker compose up -d neo4j
 ```
-
-4. Wait for Neo4j to be healthy (~60 seconds), then run:
-```bash
-make graph
+.
+├── cmd/watcher/           # Application entrypoint
+├── internal/
+│   ├── config/            # Configuration loading
+│   ├── curator/           # Pool curation and bootstrap
+│   ├── detector/          # Bellman-Ford detection & simulation
+│   ├── graph/             # In-memory graph with snapshots
+│   ├── ingestion/         # WebSocket event processing
+│   ├── metrics/           # Prometheus metrics
+│   └── persistence/       # SQLite caching
+├── pkg/
+│   ├── chain/base/        # Base chain RPC client
+│   └── dex/aerodrome/     # Aerodrome V2 integration
+├── configs/               # Default configuration files
+├── Dockerfile             # Multi-stage Docker build
+├── docker-compose.yaml    # Container orchestration
+└── Makefile               # Build and run commands
 ```
-
-### Neo4j Database Access
-
-- **Web Interface**: http://localhost:7474
-- **Bolt URI**: neo4j://localhost:7687
-- **Default Credentials**: neo4j / your-secure-password
 
 ## How It Works
 
-### Pool Fetching Pipeline
+### 1. Bootstrap Phase
+
+On startup, the system:
+1. Fetches top pools by TVL from Aerodrome V2 Factory
+2. Prioritizes pools containing start tokens (WETH, USDC, USDbC)
+3. Builds initial graph with exchange rate weights
+4. Caches pool data in SQLite for faster subsequent startups
+
+### 2. Event Processing
 
 ```
-1. Get pool count from Factory
-   └── Single RPC call
-
-2. Fetch all pool addresses (batched)
-   └── ~173 multicall requests (100 addresses each)
-
-3. Fetch pool details (batched)
-   └── For each pool: stable, reserves, token0, token1
-   └── 25 pools per multicall (4 calls × 25 = 100)
-   └── Filter: stable pools, zero reserves, low liquidity
-
-4. Fetch token metadata (batched)
-   └── decimals, symbol for unique tokens
-   └── 50 tokens per multicall (2 calls × 50 = 100)
-
-5. Build Pool objects with exchange rates
+Sync Event (WebSocket)
+    │
+    ▼
+Parse uint256 reserves ──► Graph Manager
+    │                           │
+    │                     Batch by block
+    │                           │
+    ▼                           ▼
+Update edge weights ◄─── Apply updates atomically
+    │
+    ▼
+Create snapshot ──────► Detector (parallel workers)
 ```
 
-### Arbitrage Detection
+### 3. Arbitrage Detection
 
-1. **Graph Construction**: Pools stored as weighted edges in Neo4j
-2. **Edge Weight**: `-log(exchangeRate)` for each swap direction
-3. **Negative Cycle Detection**: Bellman-Ford algorithm via Neo4j GDS
-4. **Profit Calculation**: `profit = exp(-sum(weights))` where profit > 1 indicates arbitrage
-5. **Filtering**: Only cycles starting with WETH, USDC, or USDbC
+The detector uses **negative cycle detection** in log-space:
 
-### Key Token Addresses (Base)
+1. **Weight Calculation**: `weight = -log(rate × (1 - fee))`
+2. **Bellman-Ford**: Finds paths where sum of weights < 0
+3. **Profit Factor**: `profit = exp(-sum(weights))` where profit > 1 indicates arbitrage
+4. **Simulation**: Verifies with actual AMM math and calculates optimal input
+
+### 4. Pool Reuse Prevention
+
+**Critical constraint**: Each pool can only be used once per arbitrage path. This prevents:
+- Infinite loops in the algorithm
+- Invalid paths that can't be executed atomically
+
+Pool reuse is checked at three levels:
+1. During cycle extraction
+2. During path reconstruction
+3. During final validation
+
+## Key Token Addresses (Base)
 
 | Token | Address |
 |-------|---------|
@@ -176,167 +181,122 @@ make graph
 | USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | USDbC | `0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA` |
 
-## Example Output
-
-```
-2024/01/19 19:02:25 Found 17292 pools in Aerodrome V2 Factory
-2024/01/19 19:03:17 Fetched 17292 pool addresses in 52.28s
-2024/01/19 19:05:40 Fetching info for 9040 unique tokens...
-2024/01/19 19:05:56 Pool fetching complete in 3m31s
-2024/01/19 19:05:56 Stats: 10514 valid pools, 632 stable (skipped), 5886 low liquidity (skipped), 0 errors
-2024/01/19 19:06:30 Finding Arbitrage Opportunities
-2024/01/19 19:06:35 Found desired cycle with profit factor: 1.002 and start liquidity: 150.5
-2024/01/19 19:06:35 WETH -> USDC -> TOKEN_X -> WETH
-```
-
-## Development Guide
-
-### Project Structure
-
-```
-pkg/
-├── chain/base/
-│   ├── client.go       # Base RPC client with rate limiting
-│   └── multicall.go    # Multicall3 batching with retry logic
-├── config/
-│   └── config.go       # Environment configuration loader
-├── db/
-│   ├── neo4j.go        # Neo4j connection and pool storage
-│   ├── arb.go          # Bellman-Ford arbitrage detection
-│   ├── filter.go       # Cycle filtering by starting asset
-│   └── calculations.go # Liquidity calculations
-├── dex/
-│   ├── interface.go    # PoolFetcher interface definition
-│   ├── service.go      # Multi-DEX orchestration
-│   └── aerodrome/
-│       ├── client.go   # Aerodrome V2 pool fetcher
-│       ├── contracts.go # ABI definitions
-│       └── types.go    # Token and address types
-└── models/
-    └── pool.go         # Pool struct and exchange rate calculations
-```
-
-### Key Interfaces
-
-**PoolFetcher** (`pkg/dex/interface.go`):
-```go
-type PoolFetcher interface {
-    FetchPools(ctx context.Context) ([]models.Pool, error)
-    Name() string
-}
-```
-
-**Pool Model** (`pkg/models/pool.go`):
-- `ExchangeRate`: Rate from Asset1 → Asset2 (includes fee)
-- `ReciprocalExchangeRate`: Rate from Asset2 → Asset1 (includes fee)
-- `NegativeLogExchangeRate()`: Used for Bellman-Ford edge weights
-- `IsValidForArbitrage()`: Validates rates are finite and positive
-
-### Adding a New DEX
-
-1. Create directory: `pkg/dex/<dex_name>/`
-2. Implement `PoolFetcher` interface
-3. Use `pkg/chain/base.Client.BatchCallContract()` for efficient RPC calls
-4. Register in `cmd/dexgraph/main.go`:
-   ```go
-   newDexClient := newdex.NewClient(baseClient)
-   dexService := dex.NewService(aerodromeClient, newDexClient)
-   ```
-
-### Adding a New Chain
-
-1. Create directory: `pkg/chain/<chain_name>/`
-2. Copy structure from `pkg/chain/base/`
-3. Update Multicall3 address if different
-4. Create chain-specific DEX integrations
-
-### Graceful Shutdown
-
-The application handles `SIGINT` and `SIGTERM` signals:
-- Context cancellation propagates to all RPC calls
-- Retry loops check for context cancellation between attempts
-- Database connections are properly closed via `defer`
-
-### Code Style
-
-- Follow standard Go project layout
-- Use `make fmt` before committing
-- All RPC calls should use context for cancellation
-- Use the multicall infrastructure for batched RPC calls (>10 calls)
-- Handle errors explicitly; don't ignore them
-
-### Testing Locally
-
-```bash
-# Start Neo4j only
-docker compose up -d neo4j
-
-# Run application locally (faster iteration)
-make graph
-
-# Or run with Docker
-make run
-```
-
 ## Monitoring
 
-### Neo4j Queries
+### Prometheus Metrics
 
-```cypher
--- Count assets and relationships
-MATCH (a:Asset) RETURN count(a) AS assets;
-MATCH ()-[r:PROVIDES_SWAP]->() RETURN count(r) AS swaps;
+Access metrics at `http://localhost:8080/metrics`
 
--- View top liquidity pools
-MATCH (a:Asset)-[r:PROVIDES_SWAP]->(b:Asset)
-RETURN a.name, b.name, r.sourceLiquidity, r.exchangeRate
-ORDER BY r.sourceLiquidity DESC
-LIMIT 20;
+| Metric | Description |
+|--------|-------------|
+| `arb_events_received_total` | Sync events received |
+| `arb_detection_latency_seconds` | Detection algorithm time |
+| `arb_cycles_found_total` | Negative cycles detected |
+| `arb_profitable_opportunities_total` | Opportunities passing simulation |
+| `arb_graph_nodes` | Tokens in graph |
+| `arb_graph_edges` | Edges (pool directions) in graph |
+| `arb_websocket_connected` | WebSocket connection status |
 
--- Find paths between tokens
-MATCH path = (a:Asset {name: 'WETH'})-[:PROVIDES_SWAP*1..3]->(b:Asset {name: 'USDC'})
-RETURN path LIMIT 10;
+### Log Output
+
+When an arbitrage opportunity is found:
+
+```
+INF 🎯 ARBITRAGE OPPORTUNITY DETECTED
+    block=41134020
+    path=["WETH","USDC","TOKEN","WETH"]
+    pools=["0xabc...","0xdef...","0x123..."]
+    profit_factor=1.005
+    profit_percent=0.5
+    max_input=1.5
+    estimated_profit=0.0075
+    detection_latency=0.28ms
+```
+
+## Makefile Commands
+
+| Command | Description |
+|---------|-------------|
+| `make run` | Build and run locally |
+| `make test` | Run all tests |
+| `make bench` | Run benchmarks |
+| `make lint` | Run linter |
+| `make docker-run` | Build and run with Docker |
+| `make docker-logs` | Follow Docker logs |
+| `make docker-stop` | Stop Docker container |
+| `make docker-restart` | Rebuild and restart |
+
+## Configuration Options
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `BASE_RPC_URL` | (required) | Base chain HTTP RPC endpoint |
+| `BASE_WS_URL` | (required) | Base chain WebSocket endpoint |
+| `LOG_LEVEL` | `info` | Logging level |
+| `CURATOR_TOP_POOLS_COUNT` | `500` | Number of top pools to track |
+| `SQLITE_PATH` | `data/watcher.db` | SQLite database path |
+| `METRICS_PORT` | `8080` | Prometheus metrics port |
+
+## Testing
+
+```bash
+# Run all tests
+make test
+
+# Run with coverage
+go test -coverprofile=coverage.out ./...
+
+# Run benchmarks
+make bench
+
+# Run with race detector
+go test -race ./...
 ```
 
 ## Troubleshooting
 
-### RPC Issues
-- **Rate limits**: The app uses 100ms delays between multicalls; increase if hitting limits
-- **Timeouts**: Check your RPC provider's timeout settings
-- **EOF errors**: Transient; the app retries automatically (3 attempts with backoff)
+### No Events Received
 
-### Database Issues
-- **Connection refused**: Ensure Neo4j is healthy: `docker compose ps`
-- **Authentication failed**: Check NEO4J_PASSWORD matches docker-compose.yaml
-- **Out of memory**: Neo4j needs ~2GB RAM; check Docker memory limits
+1. Check WebSocket URL points to Base mainnet (not Arbitrum or other chain)
+2. Verify Alchemy API key has WebSocket access
+3. Check `arb_websocket_connected` metric equals 1
 
 ### No Arbitrage Found
-- This is normal - profitable arbitrage is rare and usually captured by MEV bots
-- Try lowering the profit threshold in `pkg/db/arb.go`
-- Check that pools are being stored: query Neo4j for asset count
+
+This is normal - profitable arbitrage is rare and usually captured by MEV bots within milliseconds. The system is working correctly if:
+- `arb_cycles_found_total` > 0 (Bellman-Ford finds candidates)
+- `arb_profitable_opportunities_total` may be 0 (simulation filters unprofitable)
+
+To increase chances of finding opportunities:
+- Increase `CURATOR_TOP_POOLS_COUNT` to track more pools
+- The more pools tracked, the more potential paths exist
+
+### High Latency
+
+If detection latency exceeds 100ms:
+- Check system resources (CPU, memory)
+- Reduce `CURATOR_TOP_POOLS_COUNT`
+- Verify no other processes competing for resources
 
 ## Known Limitations
 
-- **Volatile pools only**: Currently skips Aerodrome stable pools (different AMM curve)
-- **No real-time updates**: Fetches pools once at startup; no continuous monitoring
-- **Single chain**: Only supports Base chain currently
-- **No execution**: Detects arbitrage but doesn't execute trades
+- **Aerodrome V2 only**: Does not support V3 concentrated liquidity pools
+- **Volatile pools only**: Stable pools use different AMM curve (not yet supported)
+- **Detection only**: Does not execute trades (execution module planned)
+- **Single chain**: Base network only
 
 ## Future Improvements
 
-- [ ] Add support for Aerodrome stable pools (x³y + y³x = k curve)
-- [ ] Implement continuous pool monitoring with WebSocket subscriptions
-- [ ] Add more DEXs on Base (Uniswap V3, SushiSwap, etc.)
-- [ ] Multi-chain support (Ethereum, Arbitrum, Optimism)
-- [ ] Flash loan simulation for arbitrage execution
-- [ ] Web dashboard for monitoring opportunities
-- [ ] Unit and integration tests
+- [ ] Increase test coverage to 80%+
+- [ ] Add trade execution via flashbots/MEV
+- [ ] Support Aerodrome stable pools
+- [ ] Multi-DEX support (Uniswap, SushiSwap)
+- [ ] Web dashboard for monitoring
+- [ ] Historical opportunity logging
 
 ## References
 
-- [Neo4j Documentation](https://neo4j.com/docs/)
-- [Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/current/)
 - [Aerodrome Finance](https://aerodrome.finance/)
-- [Base Chain](https://base.org/)
-- [go-ethereum](https://github.com/ethereum/go-ethereum)
-- [Multicall3](https://github.com/mds1/multicall)
+- [Base Network](https://base.org/)
+- [Bellman-Ford Algorithm](https://en.wikipedia.org/wiki/Bellman%E2%80%93Ford_algorithm)
+- [Alchemy WebSocket API](https://docs.alchemy.com/reference/eth-subscribe-polygon)
