@@ -179,15 +179,21 @@ func (d *Detector) processSnapshot(ctx context.Context, snap *graph.Snapshot) {
 		}
 
 		log.Info().
-			Int("cycles", len(cycles)).
 			Uint64("block", snap.BlockNumber).
+			Int("cycles_found", len(cycles)).
 			Dur("detection_time", detectionDuration).
-			Msg("Found potential arbitrage cycles")
+			Int("nodes", snap.NumNodes()).
+			Int("edges", snap.NumEdges()).
+			Msg("Detection complete - cycles found, running simulation")
 
 		// Simulate and create opportunities
+		simulatedCount := 0
+		profitableCount := 0
 		for _, cycle := range cycles {
+			simulatedCount++
 			opp := d.createOpportunity(snap, cycle, detectionDuration)
 			if opp != nil {
+				profitableCount++
 				select {
 				case d.opportunitiesCh <- opp:
 					if d.metrics != nil {
@@ -199,13 +205,23 @@ func (d *Detector) processSnapshot(ctx context.Context, snap *graph.Snapshot) {
 				}
 			}
 		}
+
+		// Log simulation summary if some cycles didn't pass simulation
+		if simulatedCount > profitableCount {
+			log.Info().
+				Uint64("block", snap.BlockNumber).
+				Int("cycles_simulated", simulatedCount).
+				Int("profitable_after_simulation", profitableCount).
+				Msg("Simulation filtered out unprofitable cycles")
+		}
 	} else {
-		log.Debug().
+		log.Info().
 			Uint64("block", snap.BlockNumber).
 			Dur("detection_time", detectionDuration).
 			Int("nodes", snap.NumNodes()).
 			Int("edges", snap.NumEdges()).
-			Msg("No arbitrage opportunities found")
+			Int("start_tokens", len(d.startTokenIdx)).
+			Msg("Detection complete - no arbitrage found")
 	}
 }
 
@@ -253,7 +269,7 @@ func (d *Detector) createOpportunity(snap *graph.Snapshot, cycle *Cycle, detecti
 
 // logOpportunity logs a detected opportunity.
 func (d *Detector) logOpportunity(opp *Opportunity) {
-	// Build path string
+	// Build path string with symbols
 	pathParts := make([]string, len(opp.Path))
 	for i, t := range opp.Path {
 		if t.Symbol != "" {
@@ -263,14 +279,32 @@ func (d *Detector) logOpportunity(opp *Opportunity) {
 		}
 	}
 
+	// Calculate profit percentage
+	profitPercent := (opp.ProfitFactor - 1.0) * 100.0
+
+	// Format max input in human-readable form (divide by 1e18 for ETH-like tokens)
+	maxInputEth := new(big.Float).SetInt(opp.MaxInputWei)
+	maxInputEth.Quo(maxInputEth, big.NewFloat(1e18))
+	maxInputStr, _ := maxInputEth.Float64()
+
+	// Format estimated profit
+	profitEth := new(big.Float).SetInt(opp.EstimatedProfitWei)
+	profitEth.Quo(profitEth, big.NewFloat(1e18))
+	profitStr, _ := profitEth.Float64()
+
 	log.Info().
+		Uint64("block", opp.DetectedAtBlock).
 		Strs("path", pathParts).
+		Strs("pools", opp.Pools).
 		Float64("profit_factor", opp.ProfitFactor).
+		Float64("profit_percent", profitPercent).
+		Float64("max_input", maxInputStr).
+		Float64("estimated_profit", profitStr).
 		Str("max_input_wei", opp.MaxInputWei.String()).
 		Str("profit_wei", opp.EstimatedProfitWei.String()).
-		Uint64("block", opp.DetectedAtBlock).
-		Dur("latency", opp.DetectionLatency).
-		Msg("Arbitrage opportunity detected")
+		Dur("detection_latency", opp.DetectionLatency).
+		Int("path_length", len(opp.Path)-1).
+		Msg("🎯 ARBITRAGE OPPORTUNITY DETECTED")
 }
 
 // DetectOnce runs detection once on a given snapshot (for testing/benchmarking).
