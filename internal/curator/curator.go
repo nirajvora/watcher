@@ -17,7 +17,6 @@ import (
 type Config struct {
 	FactoryAddress       string
 	TopPoolsCount        int
-	MinTVLUSD            float64
 	ReevaluationInterval time.Duration
 	BootstrapBatchSize   int
 	StartTokens          []string // Start tokens for arbitrage - must always be included
@@ -34,6 +33,10 @@ type Curator struct {
 
 	bootstrap *Bootstrap
 	evaluator *Evaluator
+
+	// bootstrapStartBlock records the block number when bootstrap began
+	// Used for reconciliation after WebSocket subscription starts
+	bootstrapStartBlock uint64
 }
 
 // NewCurator creates a new curator.
@@ -59,7 +62,6 @@ func NewCurator(
 			graphManager,
 			cfg.FactoryAddress,
 			cfg.TopPoolsCount,
-			cfg.MinTVLUSD,
 			cfg.ReevaluationInterval,
 			cfg.StartTokens,
 		),
@@ -69,6 +71,20 @@ func NewCurator(
 // Bootstrap performs initial pool loading.
 func (c *Curator) Bootstrap(ctx context.Context) error {
 	startTime := time.Now()
+
+	// Record the current block number BEFORE fetching any data
+	// This is used for reconciliation after WebSocket subscription starts
+	currentBlock, err := c.client.BlockNumber(ctx)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get current block number, reconciliation may be incomplete")
+		currentBlock = 0
+	} else {
+		c.bootstrapStartBlock = currentBlock
+		log.Info().
+			Uint64("block", currentBlock).
+			Msg("Recorded bootstrap start block for reconciliation")
+	}
+
 	log.Info().
 		Int("target_pools", c.config.TopPoolsCount).
 		Msg("Starting bootstrap")
@@ -256,4 +272,15 @@ func (c *Curator) GetTrackedPools() []string {
 func (c *Curator) PoolCount() int {
 	_, _, pools := c.graphManager.Stats()
 	return pools
+}
+
+// BootstrapStartBlock returns the block number recorded at bootstrap start.
+// This is used to determine the range of blocks to reconcile.
+func (c *Curator) BootstrapStartBlock() uint64 {
+	return c.bootstrapStartBlock
+}
+
+// Client returns the RPC client for use in reconciliation.
+func (c *Curator) Client() *base.Client {
+	return c.client
 }

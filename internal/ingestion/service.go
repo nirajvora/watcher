@@ -40,6 +40,11 @@ type Service struct {
 
 	// State
 	lastBlockNumber uint64
+
+	// Reconciliation
+	reconciler           *Reconciler
+	bootstrapStartBlock  uint64
+	reconciliationDone   bool
 }
 
 // NewService creates a new ingestion service.
@@ -157,6 +162,13 @@ func (s *Service) runOnce(ctx context.Context) error {
 	// Subscribe to events
 	if err := s.subscribe(ctx); err != nil {
 		return fmt.Errorf("subscribing to events: %w", err)
+	}
+
+	// Run reconciliation AFTER subscription is confirmed but BEFORE processing messages.
+	// This ensures we don't miss any events between bootstrap and streaming.
+	if err := s.runReconciliation(ctx); err != nil {
+		// Log warning but don't fail - reconciliation is best-effort
+		log.Warn().Err(err).Msg("Reconciliation failed, continuing with potentially stale data")
 	}
 
 	// Start ping loop
@@ -353,6 +365,60 @@ func (s *Service) processPoolCreatedEvent(logEntry *LogEntry) {
 // LastBlockNumber returns the last block number seen.
 func (s *Service) LastBlockNumber() uint64 {
 	return s.lastBlockNumber
+}
+
+// SetReconciler configures the reconciler for filling the bootstrap-to-streaming gap.
+// bootstrapStartBlock is the block number recorded when bootstrap began.
+func (s *Service) SetReconciler(reconciler *Reconciler, bootstrapStartBlock uint64) {
+	s.reconciler = reconciler
+	s.bootstrapStartBlock = bootstrapStartBlock
+	s.reconciliationDone = false
+}
+
+// runReconciliation fetches and applies historical events from bootstrapStartBlock to current.
+func (s *Service) runReconciliation(ctx context.Context) error {
+	if s.reconciler == nil || s.bootstrapStartBlock == 0 {
+		log.Debug().Msg("Skipping reconciliation - not configured")
+		return nil
+	}
+
+	if s.reconciliationDone {
+		log.Debug().Msg("Skipping reconciliation - already done")
+		return nil
+	}
+
+	// Get current block
+	currentBlock, err := s.reconciler.GetCurrentBlock(ctx)
+	if err != nil {
+		return fmt.Errorf("getting current block for reconciliation: %w", err)
+	}
+
+	// Set tracked pools on reconciler
+	s.mu.RLock()
+	addresses := make([]string, 0, len(s.trackedPools))
+	for addr := range s.trackedPools {
+		addresses = append(addresses, addr)
+	}
+	s.mu.RUnlock()
+	s.reconciler.SetTrackedPools(addresses)
+
+	// Run reconciliation
+	result, err := s.reconciler.Reconcile(ctx, s.bootstrapStartBlock, currentBlock)
+	if err != nil {
+		return fmt.Errorf("reconciliation failed: %w", err)
+	}
+
+	s.reconciliationDone = true
+
+	log.Info().
+		Uint64("from_block", result.FromBlock).
+		Uint64("to_block", result.ToBlock).
+		Int("events_applied", result.EventsApplied).
+		Int("pools_updated", result.PoolsUpdated).
+		Dur("duration", result.Duration).
+		Msg("Reconciliation completed - graph is now up to date")
+
+	return nil
 }
 
 func calculateBackoff(attempt int) time.Duration {

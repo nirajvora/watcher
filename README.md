@@ -6,10 +6,12 @@ A high-performance Go application for real-time arbitrage detection on Aerodrome
 
 - **Real-Time Event Processing**: WebSocket subscription to Sync events for instant reserve updates
 - **In-Memory Graph**: Copy-on-write snapshots for lock-free detection during updates
-- **Fast Detection**: Sub-millisecond arbitrage detection (~0.3ms typical)
+- **Fast Detection**: Sub-2ms arbitrage detection even with 5000+ pools
+- **Block-Based Reconciliation**: Automatically fills gaps between bootstrap and streaming to ensure accurate graph state
 - **Pool Reuse Prevention**: Ensures each pool is used only once per arbitrage path
 - **Simulation Verification**: AMM math simulation filters false positives from Bellman-Ford
 - **Prometheus Metrics**: Full observability with latency histograms and counters
+- **Scalable**: Tested with up to 5000 pools while staying well under 100ms latency budget
 
 ## Architecture
 
@@ -43,15 +45,20 @@ A high-performance Go application for real-time arbitrage detection on Aerodrome
 
 ## Performance
 
+Tested across different pool counts:
+
+| Pools | Nodes | Edges | Detection | Snapshot | Total |
+|-------|-------|-------|-----------|----------|-------|
+| 500 | ~500 | 1,000 | 0.26ms | ~1ms | ~1.3ms |
+| 2,000 | 1,999 | 4,000 | 0.8ms | ~6ms | ~7ms |
+| 5,000 | 4,997 | 10,000 | 1.8ms | ~17ms | **~19ms** |
+
 | Metric | Value |
 |--------|-------|
-| Bellman-Ford execution | ~12 μs |
-| Snapshot creation | ~126 μs |
-| Full detection cycle | **~0.3 ms** |
 | Target latency | <100 ms |
 | Block time (Base) | 2 seconds |
 
-The system runs **300x faster** than the target latency, leaving ample time for execution.
+With 5000 pools, the system uses only **19% of the latency budget**, leaving ample headroom for execution or scaling to more pools.
 
 ## Quick Start
 
@@ -131,12 +138,22 @@ make test-run
 ### 1. Bootstrap Phase
 
 On startup, the system:
-1. Fetches top pools by TVL from Aerodrome V2 Factory
-2. Prioritizes pools containing start tokens (WETH, USDC, USDbC)
-3. Builds initial graph with exchange rate weights
-4. Caches pool data in SQLite for faster subsequent startups
+1. Records the current block number (for reconciliation)
+2. Fetches top pools by TVL from Aerodrome V2 Factory
+3. Prioritizes pools containing start tokens (WETH, USDC, USDbC)
+4. Builds initial graph with exchange rate weights
+5. Caches pool data in SQLite for faster subsequent startups
 
-### 2. Event Processing
+### 2. Reconciliation Phase
+
+After WebSocket subscription is confirmed, the system:
+1. Fetches all Sync events from bootstrap start block to current block via `eth_getLogs`
+2. Applies these events to the graph to fill any gaps
+3. Ensures the graph accurately reflects real-time state before detection begins
+
+This prevents stale data from events that occurred during bootstrap.
+
+### 3. Event Processing
 
 ```
 Sync Event (WebSocket)
@@ -153,7 +170,7 @@ Update edge weights ◄─── Apply updates atomically
 Create snapshot ──────► Detector (parallel workers)
 ```
 
-### 3. Arbitrage Detection
+### 4. Arbitrage Detection
 
 The detector uses **negative cycle detection** in log-space:
 
@@ -162,7 +179,7 @@ The detector uses **negative cycle detection** in log-space:
 3. **Profit Factor**: `profit = exp(-sum(weights))` where profit > 1 indicates arbitrage
 4. **Simulation**: Verifies with actual AMM math and calculates optimal input
 
-### 4. Pool Reuse Prevention
+### 5. Pool Reuse Prevention
 
 **Critical constraint**: Each pool can only be used once per arbitrage path. This prevents:
 - Infinite loops in the algorithm
@@ -233,7 +250,9 @@ INF 🎯 ARBITRAGE OPPORTUNITY DETECTED
 | `BASE_RPC_URL` | (required) | Base chain HTTP RPC endpoint |
 | `BASE_WS_URL` | (required) | Base chain WebSocket endpoint |
 | `LOG_LEVEL` | `info` | Logging level |
-| `CURATOR_TOP_POOLS_COUNT` | `500` | Number of top pools to track |
+| `CURATOR_TOP_POOLS_COUNT` | `10000` | Number of top pools to track |
+| `DETECTOR_MAX_PATH_LENGTH` | `10` | Maximum hops in arbitrage path |
+| `DETECTOR_MIN_PROFIT_FACTOR` | `1.0005` | Minimum profit factor (1.001 = 0.1%) |
 | `SQLITE_PATH` | `data/watcher.db` | SQLite database path |
 | `METRICS_PORT` | `8080` | Prometheus metrics port |
 
@@ -287,7 +306,6 @@ If detection latency exceeds 100ms:
 
 ## Future Improvements
 
-- [ ] Increase test coverage to 80%+
 - [ ] Add trade execution via flashbots/MEV
 - [ ] Support Aerodrome stable pools
 - [ ] Multi-DEX support (Uniswap, SushiSwap)
