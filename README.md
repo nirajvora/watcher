@@ -250,9 +250,9 @@ INF 🎯 ARBITRAGE OPPORTUNITY DETECTED
 | `BASE_RPC_URL` | (required) | Base chain HTTP RPC endpoint |
 | `BASE_WS_URL` | (required) | Base chain WebSocket endpoint |
 | `LOG_LEVEL` | `info` | Logging level |
-| `CURATOR_TOP_POOLS_COUNT` | `500` | Number of top pools to track |
-| `DETECTOR_MAX_PATH_LENGTH` | `6` | Maximum hops in arbitrage path |
-| `DETECTOR_MIN_PROFIT_FACTOR` | `1.001` | Minimum profit factor (1.001 = 0.1%) |
+| `CURATOR_TOP_POOLS_COUNT` | `10000` | Number of top pools to track |
+| `DETECTOR_MAX_PATH_LENGTH` | `10` | Maximum hops in arbitrage path |
+| `DETECTOR_MIN_PROFIT_FACTOR` | `1.0005` | Minimum profit factor (1.001 = 0.1%) |
 | `SQLITE_PATH` | `data/watcher.db` | SQLite database path |
 | `METRICS_PORT` | `8080` | Prometheus metrics port |
 
