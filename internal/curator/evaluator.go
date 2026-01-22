@@ -18,7 +18,6 @@ type Evaluator struct {
 	store          *persistence.Store
 	graphManager   *graph.Manager
 	topPoolsCount  int
-	minTVL         float64
 	interval       time.Duration
 	factoryAddress string
 	startTokens    []string
@@ -31,7 +30,6 @@ func NewEvaluator(
 	graphManager *graph.Manager,
 	factoryAddress string,
 	topPoolsCount int,
-	minTVL float64,
 	interval time.Duration,
 	startTokens []string,
 ) *Evaluator {
@@ -40,7 +38,6 @@ func NewEvaluator(
 		store:          store,
 		graphManager:   graphManager,
 		topPoolsCount:  topPoolsCount,
-		minTVL:         minTVL,
 		interval:       interval,
 		factoryAddress: factoryAddress,
 		startTokens:    startTokens,

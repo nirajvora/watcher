@@ -113,7 +113,6 @@ func run(ctx context.Context, cfg *config.Config) error {
 		curator.Config{
 			FactoryAddress:       cfg.Contracts.AerodromeFactory,
 			TopPoolsCount:        cfg.Curator.TopPoolsCount,
-			MinTVLUSD:            cfg.Curator.MinTVLUSD,
 			ReevaluationInterval: cfg.Curator.ReevaluationInterval,
 			BootstrapBatchSize:   cfg.Curator.BootstrapBatchSize,
 			StartTokens:          cfg.Detector.StartTokens, // Ensure pools with start tokens are always included
@@ -152,6 +151,17 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Int("edges", edges).
 		Int("pools", pools).
 		Msg("Graph initialized")
+
+	// Set up reconciliation to fill the gap between bootstrap and WebSocket streaming.
+	// This ensures the graph is up-to-date with any events that occurred during bootstrap.
+	bootstrapStartBlock := curatorSvc.BootstrapStartBlock()
+	if bootstrapStartBlock > 0 {
+		reconciler := ingestion.NewReconciler(rpcClient, graphManager)
+		ingestionSvc.SetReconciler(reconciler, bootstrapStartBlock)
+		log.Info().
+			Uint64("bootstrap_start_block", bootstrapStartBlock).
+			Msg("Reconciliation configured - will run after WebSocket subscription")
+	}
 
 	// Validate graph consistency
 	if !graphManager.Graph().ValidateAndLog() {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
@@ -55,4 +56,16 @@ func (c *Client) CallContract(ctx context.Context, to common.Address, data []byt
 
 func (c *Client) ChainID(ctx context.Context) (*big.Int, error) {
 	return c.ethClient.ChainID(ctx)
+}
+
+// BlockNumber returns the current block number.
+func (c *Client) BlockNumber(ctx context.Context) (uint64, error) {
+	c.rateLimit()
+	return c.ethClient.BlockNumber(ctx)
+}
+
+// FilterLogs retrieves logs matching the given filter query.
+func (c *Client) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+	c.rateLimit()
+	return c.ethClient.FilterLogs(ctx, query)
 }

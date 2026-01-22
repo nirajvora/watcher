@@ -35,7 +35,6 @@ type ContractsConfig struct {
 // CuratorConfig holds pool curation settings.
 type CuratorConfig struct {
 	TopPoolsCount        int           `yaml:"top_pools_count"`
-	MinTVLUSD            float64       `yaml:"min_tvl_usd"`
 	ReevaluationInterval time.Duration `yaml:"reevaluation_interval"`
 	BootstrapBatchSize   int           `yaml:"bootstrap_batch_size"`
 }
@@ -108,7 +107,6 @@ func (c *Config) setDefaults() {
 	}
 	c.Curator = CuratorConfig{
 		TopPoolsCount:        500,
-		MinTVLUSD:            1000,
 		ReevaluationInterval: time.Hour,
 		BootstrapBatchSize:   100,
 	}
@@ -159,6 +157,12 @@ func (c *Config) applyEnvOverrides() {
 		var factor float64
 		if _, err := fmt.Sscanf(v, "%f", &factor); err == nil && factor > 1.0 {
 			c.Detector.MinProfitFactor = factor
+		}
+	}
+	if v := os.Getenv("DETECTOR_MAX_PATH_LENGTH"); v != "" {
+		var length int
+		if _, err := fmt.Sscanf(v, "%d", &length); err == nil && length >= 2 {
+			c.Detector.MaxPathLength = length
 		}
 	}
 
